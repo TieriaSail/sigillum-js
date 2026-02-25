@@ -1,0 +1,122 @@
+{
+  "name": "sigillum-js",
+  "version": "1.2.0",
+  "description": "A session recording library based on rrweb for user behavior replay and bug reproduction",
+  "keywords": [
+    "session-replay",
+    "session-recording",
+    "rrweb",
+    "user-behavior",
+    "bug-reproduction",
+    "screen-recording",
+    "user-session",
+    "replay",
+    "debugging",
+    "crash-recovery",
+    "indexeddb",
+    "field-mapping",
+    "react",
+    "vue",
+    "typescript",
+    "lightweight",
+    "privacy",
+    "logrocket-alternative",
+    "hotjar-alternative",
+    "fullstory-alternative"
+  ],
+  "author": "SigillumJs Team",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./vue": {
+      "types": "./dist/vue.d.ts",
+      "import": "./dist/vue.js",
+      "require": "./dist/vue.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js",
+      "require": "./dist/ui/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh_CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "homepage": "https://github.com/TieriaSail/sigillum-js#readme",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --ext .ts,.tsx",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=16.8.0",
+    "react-dom": ">=16.8.0",
+    "vue": ">=3.0.0",
+    "rrweb": ">=2.0.0-alpha.4",
+    "rrweb-player": ">=1.0.0-alpha.4"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    },
+    "rrweb-player": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "20.19.31",
+    "@types/react": "18.3.27",
+    "@vitest/coverage-v8": "4.0.18",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "28.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rrweb": "2.0.0-alpha.4",
+    "rrweb-player": "1.0.0-alpha.4",
+    "tsup": "8.5.1",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TieriaSail/sigillum-js"
+  },
+  "bugs": {
+    "url": "https://github.com/TieriaSail/sigillum-js/issues"
+  },
+  "sideEffects": false
+}
