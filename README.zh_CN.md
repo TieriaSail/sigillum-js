@@ -4,9 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/TieriaSail/sigillum-js"><img src="https://img.shields.io/badge/version-1.2.0-brightgreen.svg?style=flat-square" alt="version"></a>
+  <a href="https://www.npmjs.com/package/sigillum-js"><img src="https://img.shields.io/npm/v/sigillum-js.svg?style=flat-square" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/sigillum-js"><img src="https://img.shields.io/npm/dm/sigillum-js.svg?style=flat-square" alt="npm downloads"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0+-blue.svg?style=flat-square" alt="TypeScript"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="license"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/sigillum-js.svg?style=flat-square" alt="license"></a>
 </p>
 
 <p align="center">
@@ -556,5 +557,5 @@ A: 不会。不兼容时会静默处理，只是不录制，不影响业务。�
 
 ## 许可证
 
-[MIT](./LICENSE) © SigillumJs Team
+[MIT](./LICENSE) © TieriaSail
 

@@ -24,7 +24,7 @@
     "hotjar-alternative",
     "fullstory-alternative"
   ],
-  "author": "SigillumJs Team",
+  "author": "TieriaSail <tieriasail@outlook.com>",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
