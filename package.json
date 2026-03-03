@@ -85,9 +85,6 @@
     },
     "vue": {
       "optional": true
-    },
-    "rrweb-player": {
-      "optional": true
     }
   },
   "devDependencies": {

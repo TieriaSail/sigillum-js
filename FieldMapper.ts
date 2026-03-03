@@ -45,7 +45,11 @@ export class FieldMapper {
       const value = (raw as any)[rawKey];
 
       if (value !== undefined) {
-        result[serverKey] = toServerFn ? toServerFn(value) : value;
+        if (toServerFn) {
+          try { result[serverKey] = toServerFn(value); } catch { result[serverKey] = value; }
+        } else {
+          result[serverKey] = value;
+        }
       }
     }
 
@@ -63,7 +67,11 @@ export class FieldMapper {
       const value = server[serverKey];
 
       if (value !== undefined) {
-        result[rawKey] = fromServerFn ? fromServerFn(value) : value;
+        if (fromServerFn) {
+          try { result[rawKey] = fromServerFn(value); } catch { result[rawKey] = value; }
+        } else {
+          result[rawKey] = value;
+        }
       }
     }
 

@@ -108,10 +108,10 @@ describe('SessionRecorder', () => {
       expect(recorder.getSessionId()).toBe(firstId);
     });
 
-    it('stop 应将状态变为 idle（通过 resetState）', async () => {
+    it('stop 应将状态变为 stopped（数据保留供 export）', async () => {
       recorder.start();
       await recorder.stop();
-      expect(recorder.getStatus()).toBe('idle');
+      expect(recorder.getStatus()).toBe('stopped');
     });
 
     it('stop 应调用 rrweb 的 stopRecording', async () => {
@@ -703,8 +703,8 @@ describe('SessionRecorder', () => {
       expect(r1).toBe(r2);
     });
 
-    it('未初始化时无 options 应抛错', () => {
-      expect(() => getRecorder()).toThrow('Not initialized');
+    it('未初始化时无 options 应返回 null', () => {
+      expect(getRecorder()).toBeNull();
     });
 
     it('resetRecorder 应销毁并清除实例', () => {
@@ -807,13 +807,11 @@ describe('SessionRecorder', () => {
     it('相同 URL 不应重复记录', () => {
       recorder.start();
       const currentUrl = window.location.href;
+      const beforeCount = recorder.getRouteChanges().length;
 
-      // pushState 到同一个 URL
       history.pushState({}, '', currentUrl);
-      // 路由没变，不应记录
-      // 注意：由于 jsdom 的限制，pushState 可能不会改变 location.href
-      // 这里主要验证逻辑不会崩溃
-      expect(recorder.getRouteChanges()).toBeDefined();
+
+      expect(recorder.getRouteChanges().length).toBe(beforeCount);
     });
 
     it('stop 后应停止路由追踪', async () => {
@@ -843,15 +841,14 @@ describe('SessionRecorder', () => {
 
       history.pushState({}, '', '/tracked-route');
 
-      // 如果 URL 确实变了，应该调用 addCustomEvent
-      if (window.location.href.includes('/tracked-route')) {
-        expect(mockAddCustomEvent).toHaveBeenCalledWith(
-          'sigillum-route-change',
-          expect.objectContaining({
-            to: expect.stringContaining('/tracked-route'),
-          })
-        );
-      }
+      // jsdom 下 pushState 会改变 location.href
+      expect(window.location.href).toContain('/tracked-route');
+      expect(mockAddCustomEvent).toHaveBeenCalledWith(
+        'sigillum-route-change',
+        expect.objectContaining({
+          to: expect.stringContaining('/tracked-route'),
+        })
+      );
     });
 
     it('destroy 后应恢复 pushState/replaceState（不再劫持）', () => {
@@ -970,6 +967,57 @@ describe('SessionRecorder', () => {
       // 等一小段时间
       const summary = recorder.getSummary();
       expect(summary!.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('暂停期间 getSummary 的 duration 应排除暂停时间', () => {
+      vi.useFakeTimers();
+      try {
+        recorder.start();
+        vi.advanceTimersByTime(100);
+        recorder.pause();
+        vi.advanceTimersByTime(500); // 暂停 500ms
+        const summary = recorder.getSummary();
+        // duration 应约为 100ms（录制时间），而非 600ms（含暂停）
+        expect(summary!.duration).toBeLessThanOrEqual(150);
+        expect(summary!.duration).toBeGreaterThanOrEqual(50);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('pause→stop 后 duration 应排除暂停时间', async () => {
+      vi.useFakeTimers();
+      try {
+        recorder.start();
+        vi.advanceTimersByTime(100);
+        recorder.pause();
+        vi.advanceTimersByTime(500); // 暂停 500ms
+        await recorder.stop();
+        const summary = recorder.getSummary();
+        expect(summary!.duration).toBeLessThanOrEqual(150);
+        expect(summary!.duration).toBeGreaterThanOrEqual(50);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('pause→resume→stop 后 duration 应排除暂停时间', async () => {
+      vi.useFakeTimers();
+      try {
+        recorder.start();
+        vi.advanceTimersByTime(100); // 录制 100ms
+        recorder.pause();
+        vi.advanceTimersByTime(500); // 暂停 500ms
+        recorder.resume();
+        vi.advanceTimersByTime(100); // 再录制 100ms
+        await recorder.stop();
+        const summary = recorder.getSummary();
+        // duration 应约为 200ms
+        expect(summary!.duration).toBeLessThanOrEqual(250);
+        expect(summary!.duration).toBeGreaterThanOrEqual(150);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('stop 后上传数据应包含 summary', async () => {
@@ -1143,11 +1191,17 @@ describe('SessionRecorder', () => {
         chunkedUpload: { enabled: true, interval: 1000 },
         onChunkUpload,
         onError,
+        maxRetries: 0,
       });
 
       recorder.start();
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+
+      // 触发 setInterval 回调 + 等待 async uploadChunk 完成
       await vi.advanceTimersByTimeAsync(1000);
+      // 额外刷新微任务队列，确保 uploadChunk 内部的 await 链完成
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
 
       // 录制应继续
       expect(recorder.getStatus()).toBe('recording');
@@ -1194,6 +1248,253 @@ describe('SessionRecorder', () => {
 
       expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
       removeSpy.mockRestore();
+    });
+  });
+
+  describe('exportRecording / clearRecording', () => {
+    it('stopped 状态下 exportRecording 应返回完整数据', async () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      // 模拟事件通过 rrweb emit
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      if (emit) {
+        emit({ type: 2, data: {}, timestamp: Date.now() });
+        emit({ type: 3, data: {}, timestamp: Date.now() });
+      }
+      await recorder.stop();
+      expect(recorder.getStatus()).toBe('stopped');
+
+      const data = recorder.exportRecording();
+      expect(data).not.toBeNull();
+      expect(data!.sessionId).toBeTruthy();
+      expect(data!.events.length).toBeGreaterThanOrEqual(0);
+      expect(data!.startTime).toBeGreaterThan(0);
+      expect(data!.endTime).toBeGreaterThan(0);
+      expect(data!.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('idle 状态下 exportRecording 应返回 null', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      expect(recorder.exportRecording()).toBeNull();
+    });
+
+    it('recording 状态下 exportRecording 应返回 null', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      expect(recorder.exportRecording()).toBeNull();
+    });
+
+    it('无事件时 exportRecording 应返回 null', async () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      await recorder.stop();
+      // events 为空（mock rrweb 未 emit 任何事件）
+      expect(recorder.exportRecording()).toBeNull();
+    });
+
+    it('clearRecording 应清空所有数据', async () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      await recorder.stop();
+      recorder.clearRecording();
+      expect(recorder.getStatus()).toBe('idle');
+      expect(recorder.getSessionId()).toBe('');
+      expect(recorder.getEventCount()).toBe(0);
+    });
+
+    it('recording 状态下 clearRecording 应被忽略', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      const sid = recorder.getSessionId();
+      recorder.clearRecording();
+      expect(recorder.getSessionId()).toBe(sid);
+      expect(recorder.getStatus()).toBe('recording');
+    });
+
+    it('clearRecording 后可正常 start 新录制', async () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      await recorder.stop();
+      recorder.clearRecording();
+      recorder.start();
+      expect(recorder.getStatus()).toBe('recording');
+      expect(recorder.getSessionId()).toBeTruthy();
+    });
+  });
+
+  describe('maxEvents 自动停止', () => {
+    it('事件数达到 maxEvents 应自动停止录制', () => {
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        maxEvents: 3,
+      });
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      expect(emit).toBeDefined();
+
+      emit({ type: 2, data: {}, timestamp: Date.now() });
+      emit({ type: 3, data: {}, timestamp: Date.now() });
+      // 第 3 个事件触发 maxEvents
+      emit({ type: 3, data: {}, timestamp: Date.now() });
+
+      expect(recorder.getStatus()).toBe('stopped');
+    });
+
+    it('未达到 maxEvents 应继续录制', () => {
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        maxEvents: 10,
+      });
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      expect(emit).toBeDefined();
+
+      emit({ type: 2, data: {}, timestamp: Date.now() });
+      emit({ type: 3, data: {}, timestamp: Date.now() });
+      expect(recorder.getStatus()).toBe('recording');
+    });
+  });
+
+  describe('identify', () => {
+    it('录制中调用 identify 应更新 metadata 并触发 addCustomEvent', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      recorder.identify('user-123', { name: 'Alice' });
+
+      const metadata = recorder.getMetadata();
+      expect(metadata?.user).toBeDefined();
+      expect(metadata?.user?.userId).toBe('user-123');
+      expect(metadata?.user?.traits).toEqual({ name: 'Alice' });
+      expect(metadata?.user?.identifiedAt).toBeGreaterThan(0);
+
+      expect(mockAddCustomEvent).toHaveBeenCalledWith(
+        'sigillum-identify',
+        { userId: 'user-123', traits: { name: 'Alice' } },
+      );
+    });
+
+    it('idle 状态调用 identify 应在 start 后生效', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.identify('user-early', { role: 'tester' });
+      expect(recorder.getMetadata()).toBeNull();
+
+      recorder.start();
+      const metadata = recorder.getMetadata();
+      expect(metadata?.user?.userId).toBe('user-early');
+      expect(metadata?.user?.traits).toEqual({ role: 'tester' });
+    });
+
+    it('多次 identify 应覆盖之前的身份', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      recorder.identify('user-A');
+      recorder.identify('user-B', { role: 'admin' });
+
+      const metadata = recorder.getMetadata();
+      expect(metadata?.user?.userId).toBe('user-B');
+      expect(metadata?.user?.traits).toEqual({ role: 'admin' });
+    });
+  });
+
+  describe('getEstimatedSize', () => {
+    it('无事件时返回 0', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      expect(recorder.getEstimatedSize()).toBe(0);
+    });
+
+    it('录制中返回正数', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      emit({ type: 2, data: { html: '<h1>Hello</h1>' }, timestamp: Date.now() });
+      emit({ type: 3, data: {}, timestamp: Date.now() });
+      emit({ type: 3, data: {}, timestamp: Date.now() });
+
+      const size = recorder.getEstimatedSize();
+      expect(size).toBeGreaterThan(0);
+    });
+  });
+
+  describe('sendBeacon unload', () => {
+    let originalSendBeacon: any;
+
+    beforeEach(() => {
+      originalSendBeacon = navigator.sendBeacon;
+    });
+
+    afterEach(() => {
+      Object.defineProperty(navigator, 'sendBeacon', {
+        value: originalSendBeacon,
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    it('配置 beaconUrl 时，beforeunload 应使用 sendBeacon', () => {
+      const mockSendBeacon = vi.fn().mockReturnValue(true);
+      Object.defineProperty(navigator, 'sendBeacon', {
+        value: mockSendBeacon,
+        writable: true,
+        configurable: true,
+      });
+
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        beaconUrl: 'https://example.com/beacon',
+      });
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      emit({ type: 2, data: {}, timestamp: Date.now() });
+
+      window.dispatchEvent(new Event('beforeunload'));
+
+      expect(mockSendBeacon).toHaveBeenCalledWith(
+        'https://example.com/beacon',
+        expect.any(Blob),
+      );
+
+      recorder.destroy();
+    });
+
+    it('sendBeacon 失败时应降级到缓存', () => {
+      const mockSendBeacon = vi.fn().mockReturnValue(false);
+      Object.defineProperty(navigator, 'sendBeacon', {
+        value: mockSendBeacon,
+        writable: true,
+        configurable: true,
+      });
+
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        beaconUrl: 'https://example.com/beacon',
+      });
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      emit({ type: 2, data: {}, timestamp: Date.now() });
+
+      window.dispatchEvent(new Event('beforeunload'));
+
+      expect(mockSendBeacon).toHaveBeenCalled();
+
+      recorder.destroy();
+    });
+
+    it('未配置 beaconUrl 时不调用 sendBeacon', () => {
+      const mockSendBeacon = vi.fn();
+      Object.defineProperty(navigator, 'sendBeacon', {
+        value: mockSendBeacon,
+        writable: true,
+        configurable: true,
+      });
+
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+      const emit = (record as any).mock.calls[0]?.[0]?.emit;
+      emit({ type: 2, data: {}, timestamp: Date.now() });
+
+      window.dispatchEvent(new Event('beforeunload'));
+
+      expect(mockSendBeacon).not.toHaveBeenCalled();
     });
   });
 });

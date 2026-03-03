@@ -119,7 +119,7 @@ const recorder = getRecorder({
 
 | Framework | Import Path | Key Exports |
 |-----------|-------------|-------------|
-| **Vanilla JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()` |
+| **Vanilla JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()`, `isRecorderInitialized()` |
 | **React** 16.8+ | `sigillum-js/react` | `useSessionRecorder()`, `useAutoRecord()` |
 | **Vue** 3+ | `sigillum-js/vue` | `createSigillumPlugin()`, `useSessionRecorder()`, `useAutoRecord()` |
 
@@ -145,11 +145,14 @@ function MyPage() {
 
 // Option 2: Auto record (start on mount, stop on unmount)
 function AutoRecordPage() {
-  const { sessionId, addTag } = useAutoRecord({
+  const { sessionId, status, addTag, identify } = useAutoRecord({
     onUpload: async (data) => { /* ... */ },
   });
 
-  return <div>SessionId: {sessionId}</div>;
+  // Associate user identity at any time
+  identify('user-123', { plan: 'pro' });
+
+  return <div>Status: {status}, SessionId: {sessionId}</div>;
 }
 ```
 </details>
@@ -179,17 +182,22 @@ app.mount('#app');
 
 ```vue
 <script setup>
-import { inject, onUnmounted } from 'vue';
+import { inject, onUnmounted, ref } from 'vue';
 import { useSessionRecorder, useAutoRecord } from 'sigillum-js/vue';
 
 // Manual control
 const recorder = useSessionRecorder(inject);
 recorder?.addTag('page-view', { route: '/home' });
 
-// Or auto record
-const { status, sessionId, addTag } = useAutoRecord(inject, onUnmounted);
+// Auto record with reactive status/sessionId (pass ref for Vue reactivity)
+const { status, sessionId, addTag, identify } = useAutoRecord(inject, onUnmounted, { ref });
+identify('user-123', { plan: 'pro' });
 addTag('user-action', { action: 'click-buy' });
 </script>
+
+<template>
+  <div>Status: {{ status.value }}, Session: {{ sessionId.value }}</div>
+</template>
 ```
 </details>
 
@@ -197,7 +205,7 @@ addTag('user-action', { action: 'click-buy' });
 <summary><b>Vanilla JS / jQuery Example</b></summary>
 
 ```javascript
-import { getRecorder, resetRecorder } from 'sigillum-js';
+import { getRecorder, resetRecorder, isRecorderInitialized } from 'sigillum-js';
 
 const recorder = getRecorder({
   onUpload: async (data) => {
@@ -238,20 +246,25 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 ### SessionRecorder
 
 ```typescript
-const recorder = getRecorder(options);
+const recorder = getRecorder(options); // Returns SessionRecorder | null
 
 // Lifecycle
 recorder.start();              // Start recording
-await recorder.stop();         // Stop and upload
+await recorder.stop();         // Stop and upload (data kept in memory)
 recorder.pause();              // Pause (no upload)
 recorder.resume();             // Resume
+
+// Data export & cleanup
+recorder.exportRecording();    // Export recording data (only in 'stopped' state)
+recorder.clearRecording();     // Manually clear recording data from memory
 
 // Session
 recorder.getSessionId();       // Get current sessionId
 recorder.setSessionId(id);     // Set sessionId (link to external system)
 
-// Tags
+// Tags & Identity
 recorder.addTag(name, data);   // Add tag (uses rrweb native addCustomEvent)
+recorder.identify(userId, traits?); // Associate user identity (any time during recording)
 
 // Snapshot
 recorder.takeFullSnapshot();   // Manually trigger a full DOM snapshot
@@ -259,6 +272,7 @@ recorder.takeFullSnapshot();   // Manually trigger a full DOM snapshot
 // Status & Insights
 recorder.getStatus();          // 'idle' | 'recording' | 'paused' | 'stopped'
 recorder.getEventCount();      // Current event count
+recorder.getEstimatedSize();   // Estimated recording size in bytes
 recorder.getMetadata();        // Auto-collected session metadata
 recorder.getSummary();         // Real-time behavior summary
 recorder.getRouteChanges();    // SPA route change history
@@ -268,12 +282,17 @@ recorder.destroy();
 resetRecorder();               // Reset singleton
 ```
 
+> **Note:** `stop()` now keeps data in memory (status stays `'stopped'`). You can call `exportRecording()` to get a full copy of the recording data (events, metadata, and summary). Data is automatically cleared on next `start()` or via manual `clearRecording()`.
+
+> **Note:** `getRecorder()` returns `null` (with a `console.warn`) when called without options and no instance has been initialized. It no longer throws an error.
+
 ### Configuration
 
 ```typescript
 interface SessionRecorderOptions {
-  // Required
-  onUpload: (data: Record<string, any>) => Promise<{ success: boolean }>;
+  // Optional — without onUpload, runs in local-only mode
+  // (data retained in memory; use exportRecording() to export)
+  onUpload?: (data: Record<string, any>) => Promise<{ success: boolean }>;
 
   // Field mapping
   fieldMapping?: FieldMapping[];
@@ -287,6 +306,7 @@ interface SessionRecorderOptions {
     enabled?: boolean;      // default: true
     saveInterval?: number;  // default: 5000ms
     maxItems?: number;      // default: 10
+    maxAge?: number;        // default: 604800000 (7 days) — expired entries auto-cleaned
   };
 
   // Compatibility
@@ -308,9 +328,11 @@ interface SessionRecorderOptions {
   rrwebConfig?: RrwebConfig;
 
   // Other
+  maxEvents?: number;       // default: 50000 — auto-stop to prevent memory overflow
   maxDuration?: number;     // default: 1800000 (30min)
   maxRetries?: number;      // default: 3
   uploadOnUnload?: boolean; // default: true
+  beaconUrl?: string;       // sendBeacon URL for unload — delivers remaining events via navigator.sendBeacon on page close
   debug?: boolean;          // default: false
 }
 ```

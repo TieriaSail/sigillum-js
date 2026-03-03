@@ -3,12 +3,13 @@
  * 提供在 React 组件中使用 SessionRecorder 的便捷方式
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import {
   SessionRecorder,
   getRecorder,
   isRecorderInitialized,
 } from './SessionRecorder';
+import { isBrowser } from './compatibility';
 import type { SessionRecorderOptions, RecordingStatus, RecordingSummary, SessionMetadata, RouteChange } from './types';
 
 /**
@@ -36,14 +37,16 @@ import type { SessionRecorderOptions, RecordingStatus, RecordingSummary, Session
 export function useSessionRecorder(options?: SessionRecorderOptions) {
   const recorderRef = useRef<SessionRecorder | null>(null);
   const optionsRef = useRef(options);
+  const [status, setStatus] = useState<RecordingStatus>('idle');
+  const [sessionId, setSessionIdState] = useState<string>('');
 
-  // 保持 options 引用最新
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
-  // 获取或创建 recorder
   const getOrCreateRecorder = useCallback((): SessionRecorder | null => {
+    if (!isBrowser()) return null;
+
     if (recorderRef.current) {
       return recorderRef.current;
     }
@@ -60,6 +63,32 @@ export function useSessionRecorder(options?: SessionRecorderOptions) {
 
     return null;
   }, []);
+
+  // 订阅 recorder 的状态变化以驱动 React re-render
+  useEffect(() => {
+    const recorder = getOrCreateRecorder();
+    if (!recorder) return;
+
+    // 同步初始值
+    setStatus(recorder.getStatus());
+    setSessionIdState(recorder.getSessionId());
+
+    const origCallback = (recorder as any).options?.onStatusChange;
+    const wrappedOnStatusChange = (newStatus: RecordingStatus, prevStatus: RecordingStatus) => {
+      setStatus(newStatus);
+      setSessionIdState(recorder.getSessionId());
+      try { optionsRef.current?.onStatusChange?.(newStatus, prevStatus); } catch { /* */ }
+    };
+
+    // 注入包装后的回调（通过内部 options 引用）
+    (recorder as any).options.onStatusChange = wrappedOnStatusChange;
+
+    return () => {
+      if ((recorder as any).options) {
+        (recorder as any).options.onStatusChange = origCallback;
+      }
+    };
+  }, [getOrCreateRecorder]);
 
   const start = useCallback(() => {
     const recorder = getOrCreateRecorder();
@@ -86,12 +115,12 @@ export function useSessionRecorder(options?: SessionRecorderOptions) {
     recorder?.addTag(name, data);
   }, [getOrCreateRecorder]);
 
-  const getStatus = useCallback((): RecordingStatus => {
+  const getStatusFn = useCallback((): RecordingStatus => {
     const recorder = getOrCreateRecorder();
     return recorder?.getStatus() || 'idle';
   }, [getOrCreateRecorder]);
 
-  const getSessionId = useCallback((): string => {
+  const getSessionIdFn = useCallback((): string => {
     const recorder = getOrCreateRecorder();
     return recorder?.getSessionId() || '';
   }, [getOrCreateRecorder]);
@@ -99,6 +128,7 @@ export function useSessionRecorder(options?: SessionRecorderOptions) {
   const setSessionId = useCallback((id: string) => {
     const recorder = getOrCreateRecorder();
     recorder?.setSessionId(id);
+    setSessionIdState(id);
   }, [getOrCreateRecorder]);
 
   const getSummary = useCallback((): RecordingSummary | null => {
@@ -116,14 +146,26 @@ export function useSessionRecorder(options?: SessionRecorderOptions) {
     return recorder?.getRouteChanges() || [];
   }, [getOrCreateRecorder]);
 
+  const identify = useCallback((userId: string, traits?: Record<string, any>) => {
+    const recorder = getOrCreateRecorder();
+    recorder?.identify(userId, traits);
+  }, [getOrCreateRecorder]);
+
   return {
     start,
     stop,
     pause,
     resume,
     addTag,
-    getStatus,
-    getSessionId,
+    identify,
+    /** 响应式状态，随录制状态变化自动更新 */
+    status,
+    /** 响应式 sessionId，随录制生命周期自动更新 */
+    sessionId,
+    /** 命令式获取状态（非响应式） */
+    getStatus: getStatusFn,
+    /** 命令式获取 sessionId（非响应式） */
+    getSessionId: getSessionIdFn,
     setSessionId,
     getSummary,
     getMetadata,
@@ -140,28 +182,30 @@ export function useSessionRecorder(options?: SessionRecorderOptions) {
  * @example
  * ```tsx
  * function MyPage() {
- *   const { sessionId, addTag } = useAutoRecord({
+ *   const { sessionId, status, addTag } = useAutoRecord({
  *     onUpload: async (data) => { ... },
  *   });
  *
- *   return <div>SessionId: {sessionId}</div>;
+ *   return <div>Status: {status}, SessionId: {sessionId}</div>;
  * }
  * ```
  */
 export function useAutoRecord(options: SessionRecorderOptions) {
-  const { start, stop, getSessionId, addTag, getStatus } = useSessionRecorder(options);
+  const { start, stop, status, sessionId, addTag, identify } = useSessionRecorder(options);
 
   useEffect(() => {
     start();
     return () => {
-      stop();
+      stop().catch(() => {});
     };
   }, [start, stop]);
 
   return {
-    sessionId: getSessionId(),
-    status: getStatus(),
+    /** 响应式状态 */
+    status,
+    /** 响应式 sessionId */
+    sessionId,
     addTag,
+    identify,
   };
 }
-

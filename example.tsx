@@ -166,18 +166,20 @@ export function Example5_ReactHook() {
  * 示例 6: React Hook - 自动录制
  */
 export function Example6_AutoRecord() {
-  // 组件挂载时自动开始录制，卸载时自动停止
-  const { sessionId, addTag } = useAutoRecord({
+  const { sessionId, status, addTag, identify } = useAutoRecord({
     onUpload: async (data) => {
       console.log('上传:', data);
       return { success: true };
     },
   });
 
+  // 关联用户身份（登录后等任意时刻调用）
+  identify('user-123', { plan: 'pro' });
+
   return (
     <div>
       <h2>自动录制示例</h2>
-      <p>SessionId: {sessionId}</p>
+      <p>状态: {status}，SessionId: {sessionId}</p>
       <button onClick={() => addTag('button-click')}>添加标记</button>
     </div>
   );
@@ -264,7 +266,7 @@ export function Example9_Privacy() {
       rrwebConfig: {
         privacy: {
           maskAllInputs: false,
-          maskInputTypes: ['password', 'credit-card', 'cvv'],
+          maskInputOptions: { password: true },
           maskTextSelector: '.sensitive',
           ignoreClass: 'rr-ignore',
         },
@@ -318,7 +320,7 @@ export function Example10_Production() {
         mouseMoveInterval: isProd ? 100 : 50, // 生产环境降低采样
         recordCanvas: false, // 不录制 Canvas
         privacy: {
-          maskInputTypes: ['password', 'credit-card', 'cvv'],
+          maskInputOptions: { password: true },
         },
       },
       cache: {

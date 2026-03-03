@@ -122,7 +122,7 @@ const recorder = getRecorder({
 
 | 框架 | 导入路径 | 主要导出 |
 |------|----------|----------|
-| **原生 JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()` |
+| **原生 JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()`, `isRecorderInitialized()` |
 | **React** 16.8+ | `sigillum-js/react` | `useSessionRecorder()`, `useAutoRecord()` |
 | **Vue** 3+ | `sigillum-js/vue` | `createSigillumPlugin()`, `useSessionRecorder()`, `useAutoRecord()` |
 
@@ -148,11 +148,14 @@ function MyPage() {
 
 // 方式二：自动录制（组件挂载时开始，卸载时停止）
 function AutoRecordPage() {
-  const { sessionId, addTag } = useAutoRecord({
+  const { sessionId, status, addTag, identify } = useAutoRecord({
     onUpload: async (data) => { /* ... */ },
   });
 
-  return <div>SessionId: {sessionId}</div>;
+  // 关联用户身份
+  identify('user-123', { plan: 'pro' });
+
+  return <div>状态: {status}，SessionId: {sessionId}</div>;
 }
 ```
 </details>
@@ -182,17 +185,22 @@ app.mount('#app');
 
 ```vue
 <script setup>
-import { inject, onUnmounted } from 'vue';
+import { inject, onUnmounted, ref } from 'vue';
 import { useSessionRecorder, useAutoRecord } from 'sigillum-js/vue';
 
 // 手动获取 recorder
 const recorder = useSessionRecorder(inject);
 recorder?.addTag('page-view', { route: '/home' });
 
-// 或自动录制
-const { status, sessionId, addTag } = useAutoRecord(inject, onUnmounted);
+// 自动录制 + 响应式状态（传入 ref 即可获得 Vue 响应式 status/sessionId）
+const { status, sessionId, addTag, identify } = useAutoRecord(inject, onUnmounted, { ref });
+identify('user-123', { plan: 'pro' });
 addTag('user-action', { action: 'click-buy' });
 </script>
+
+<template>
+  <div>状态: {{ status.value }}，会话: {{ sessionId.value }}</div>
+</template>
 ```
 </details>
 
@@ -200,7 +208,7 @@ addTag('user-action', { action: 'click-buy' });
 <summary><b>原生 JS / jQuery 示例</b></summary>
 
 ```javascript
-import { getRecorder, resetRecorder } from 'sigillum-js';
+import { getRecorder, resetRecorder, isRecorderInitialized } from 'sigillum-js';
 
 const recorder = getRecorder({
   onUpload: async (data) => {
@@ -242,7 +250,7 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 ### SessionRecorder
 
 ```typescript
-const recorder = getRecorder(options);
+const recorder = getRecorder(options); // 返回 SessionRecorder | null
 
 // 生命周期
 recorder.start();              // 开始录制
@@ -254,15 +262,22 @@ recorder.resume();             // 恢复录制
 recorder.getSessionId();       // 获取当前 sessionId
 recorder.setSessionId(id);     // 设置 sessionId（关联外部系统）
 
-// 标记
+// 标记 & 用户身份
 recorder.addTag(name, data);   // 添加标记（使用 rrweb 原生 addCustomEvent）
+recorder.identify(userId, traits?); // 关联用户身份（录制期间任意时刻可调用）
 
 // 快照
 recorder.takeFullSnapshot();   // 手动触发全量 DOM 快照
 
+// 数据导出
+recorder.exportRecording();    // 导出录制数据。仅在 stopped 状态可用，返回包含事件流、元数据、行为摘要的完整数据副本
+recorder.clearRecording();     // 手动清空录制数据，释放内存。录制中不可调用
+// 注：stop() 后数据保留在内存中（状态为 stopped），可通过 exportRecording() 导出。下次 start() 或 clearRecording() 时清空。
+
 // 状态 & 洞察
 recorder.getStatus();          // 'idle' | 'recording' | 'paused' | 'stopped'
 recorder.getEventCount();      // 当前事件数量
+recorder.getEstimatedSize();   // 估算录制数据大小（字节）
 recorder.getMetadata();        // 自动采集的会话元数据
 recorder.getSummary();         // 实时行为摘要
 recorder.getRouteChanges();    // SPA 路由变化历史
@@ -270,14 +285,16 @@ recorder.getRouteChanges();    // SPA 路由变化历史
 // 销毁
 recorder.destroy();
 resetRecorder();               // 重置单例
+// 注：getRecorder() 未初始化时不再抛出异常，而是返回 null 并输出 console.warn
 ```
 
 ### 配置选项
 
 ```typescript
 interface SessionRecorderOptions {
-  // ========== 必填 ==========
-  onUpload: (data: Record<string, any>) => Promise<{ success: boolean }>;
+  // ========== 上传 ==========
+  // 不提供时为纯本地模式，录制数据仅保留在内存中，需通过 exportRecording() 手动导出
+  onUpload?: (data: Record<string, any>) => Promise<{ success: boolean }>;
 
   // ========== 字段映射 ==========
   fieldMapping?: FieldMapping[];
@@ -291,6 +308,7 @@ interface SessionRecorderOptions {
     enabled?: boolean;      // 默认: true
     saveInterval?: number;  // 默认: 5000ms
     maxItems?: number;      // 默认: 10
+    maxAge?: number;        // 缓存最大保留时间（毫秒），超过后自动清理 @default 604800000 (7天)
   };
 
   // ========== 兼容性 ==========
@@ -313,8 +331,10 @@ interface SessionRecorderOptions {
 
   // ========== 其他 ==========
   maxDuration?: number;     // 默认: 1800000 (30分钟)
+  maxEvents?: number;       // 最大事件数量，超过后自动停止录制以防内存溢出 @default 50000
   maxRetries?: number;      // 默认: 3
   uploadOnUnload?: boolean; // 默认: true
+  beaconUrl?: string;       // sendBeacon URL — 页面关闭时通过 navigator.sendBeacon 投递剩余事件
   debug?: boolean;          // 默认: false
 }
 ```

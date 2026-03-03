@@ -64,6 +64,7 @@ export type {
   RecordingSummary,
   RecordingChunk,
   RouteChange,
+  UserIdentity,
 
   // 字段映射
   FieldMapping,
@@ -81,6 +82,7 @@ export type {
 export { FieldMapper, createFieldMapper, DEFAULT_FIELD_MAPPING } from './FieldMapper';
 export { CacheManager } from './CacheManager';
 export { checkCompatibility, isBrowser } from './compatibility';
+export type { CompatibilityResult } from './compatibility';
 
 // ==================== 框架集成（独立入口，不打入主包） ====================
 // React: import { useSessionRecorder, useAutoRecord } from 'sigillum-js/react';

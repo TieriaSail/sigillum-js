@@ -111,7 +111,7 @@ export function QuickStartProduction() {
         mouseMoveInterval: isProd ? 100 : 50,
         recordCanvas: false,
         privacy: {
-          maskInputTypes: ['password', 'credit-card', 'cvv'],
+          maskInputOptions: { password: true },
           maskTextSelector: '.sensitive',
         },
       },
@@ -155,7 +155,47 @@ export function QuickStartProduction() {
 }
 
 /**
- * 方式 4: 与 Logger 配合
+ * 方式 4: 纯本地模式（调试用）
+ * 不上传，仅本地缓存，用户手动导出数据
+ */
+export function QuickStartLocalOnly() {
+  useEffect(() => {
+    const recorder = getRecorder({
+      debug: true,
+    });
+
+    recorder.start();
+
+    return () => {
+      recorder.stop();
+    };
+  }, []);
+
+  const handleExport = async () => {
+    const recorder = getRecorder();
+    if (!recorder) return;
+
+    // 需要先 stop 才能 export
+    await recorder.stop();
+    const data = recorder.exportRecording();
+    if (data) {
+      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recording-${data.sessionId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      recorder.clearRecording();
+    }
+  };
+
+  return <button onClick={handleExport}>Export Recording</button>;
+}
+
+/**
+ * 方式 5: 与 Logger 配合
  */
 export function QuickStartWithLogger() {
   useEffect(() => {
@@ -208,7 +248,7 @@ export function QuickStartWithLogger() {
  *
  * function handleCheckout() {
  *   const recorder = getRecorder();
- *   recorder.addTag('checkout-start', { cartValue: 100 });
+ *   recorder?.addTag('checkout-start', { cartValue: 100 });
  * }
  *
  * 3. 后端接口：

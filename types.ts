@@ -3,6 +3,8 @@
  * sigillum-js
  */
 
+import type React from 'react';
+
 // ==================== rrweb 相关类型 ====================
 
 /** rrweb 事件类型 */
@@ -56,6 +58,16 @@ export interface RouteChange {
   timestamp: number;
 }
 
+/** 用户身份信息 */
+export interface UserIdentity {
+  /** 用户 ID */
+  userId: string;
+  /** 附加用户属性 */
+  traits?: Record<string, any>;
+  /** 标识时间 */
+  identifiedAt: number;
+}
+
 /** 会话元数据（自动采集的环境信息） */
 export interface SessionMetadata {
   /** 页面标题 */
@@ -78,6 +90,8 @@ export interface SessionMetadata {
   touchSupport: boolean;
   /** 设备像素比 */
   devicePixelRatio: number;
+  /** 用户身份（通过 identify() 设置） */
+  user?: UserIdentity;
 }
 
 /**
@@ -141,6 +155,8 @@ export interface RawRecordingData {
 /** 上传结果 */
 export interface UploadResult {
   success: boolean;
+  /** 失败时是否应重试（分段上传使用） */
+  shouldRetry?: boolean;
   error?: string;
 }
 
@@ -154,6 +170,8 @@ export interface CacheConfig {
   saveInterval?: number;
   /** 最大缓存条数 @default 10 */
   maxItems?: number;
+  /** 缓存最大保留时间（毫秒），超过后自动清理 @default 604800000 (7天) */
+  maxAge?: number;
 }
 
 /**
@@ -342,9 +360,12 @@ export interface RrwebConfig {
 
 /** 录制器配置 */
 export interface SessionRecorderOptions {
-  // ========== 必填 ==========
-  /** 上传函数 */
-  onUpload: (data: Record<string, any>) => Promise<UploadResult>;
+  // ========== 上传 ==========
+  /**
+   * 上传函数
+   * 不提供时为纯本地模式，录制数据仅保留在内存中，需通过 exportRecording() 手动导出
+   */
+  onUpload?: (data: Record<string, any>) => Promise<UploadResult>;
 
   // ========== 字段映射 ==========
   /** 字段映射配置 */
@@ -426,10 +447,18 @@ export interface SessionRecorderOptions {
   // ========== 其他 ==========
   /** 最大录制时长（毫秒）@default 1800000 (30分钟) */
   maxDuration?: number;
+  /** 最大事件数量，超过后自动停止录制以防内存溢出 @default 50000 */
+  maxEvents?: number;
   /** 上传失败重试次数 @default 3 */
   maxRetries?: number;
   /** 页面卸载时尝试上传 @default true */
   uploadOnUnload?: boolean;
+  /**
+   * 页面卸载时使用 navigator.sendBeacon 发送数据的 URL
+   * 仅在 sendBeacon 可用时生效；提供此配置后，卸载时会优先用 sendBeacon
+   * 将未上传的事件投递到该地址（JSON 格式），确保数据不会因为页面关闭而丢失
+   */
+  beaconUrl?: string;
   /** 调试模式 @default false */
   debug?: boolean;
 }

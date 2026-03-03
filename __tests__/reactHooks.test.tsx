@@ -70,7 +70,7 @@ describe('React Hooks', () => {
         await result.current.stop();
       });
 
-      expect(result.current.getStatus()).toBe('idle');
+      expect(result.current.getStatus()).toBe('stopped');
     });
 
     it('pause/resume 应正确切换状态', () => {

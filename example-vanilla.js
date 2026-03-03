@@ -206,7 +206,7 @@ const recorder = getRecorder({
     mouseMoveInterval: isProd ? 100 : 50,
     recordCanvas: false,
     privacy: {
-      maskInputTypes: ['password', 'credit-card', 'cvv'],
+      maskInputOptions: { password: true },
       maskTextSelector: '.sensitive',
     },
   },

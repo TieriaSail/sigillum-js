@@ -106,7 +106,7 @@ describe('Vue 集成', () => {
       plugin.install(app as any);
 
       // recorder 应已在录制状态
-      const recorder = getRecorder();
+      const recorder = getRecorder()!;
       expect(recorder.getStatus()).toBe('recording');
     });
 
@@ -118,7 +118,7 @@ describe('Vue 集成', () => {
       const app = createMockApp();
       plugin.install(app as any);
 
-      const recorder = getRecorder();
+      const recorder = getRecorder()!;
       expect(recorder.getStatus()).toBe('idle');
     });
 
@@ -134,6 +134,33 @@ describe('Vue 集成', () => {
 
       // recorder 已创建
       expect(isRecorderInitialized()).toBe(true);
+    });
+
+    it('app.unmount 应销毁 recorder', () => {
+      const plugin = createSigillumPlugin(defaultOptions);
+      const app = createMockApp();
+      const originalUnmount = app.unmount;
+      plugin.install(app as any);
+
+      const recorder = getRecorder()!;
+      expect(recorder.getStatus()).toBe('recording');
+
+      app.unmount();
+
+      // destroy 后 disabled=true，start 不再生效
+      recorder.start();
+      expect(recorder.getStatus()).toBe('idle');
+      expect(originalUnmount).toHaveBeenCalled();
+    });
+
+    it('app.unmount 不应抛出异常', () => {
+      const plugin = createSigillumPlugin({
+        ...defaultOptions,
+        autoStart: false,
+      });
+      const app = createMockApp();
+      plugin.install(app as any);
+      expect(() => app.unmount()).not.toThrow();
     });
   });
 

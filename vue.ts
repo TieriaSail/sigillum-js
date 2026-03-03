@@ -29,6 +29,7 @@ import {
   getRecorder,
   isRecorderInitialized,
 } from './SessionRecorder';
+import { isBrowser } from './compatibility';
 import type { SessionRecorderOptions, RecordingStatus } from './types';
 
 // ==================== 类型定义（避免直接依赖 vue） ====================
@@ -45,6 +46,9 @@ type InjectFn = <T>(key: symbol, defaultValue?: T) => T | undefined;
 
 /** Vue 3 onUnmounted 函数签名 */
 type OnUnmountedFn = (fn: () => void) => void;
+
+/** Vue 3 ref 函数签名（用于可选响应式支持） */
+type RefFn = <T>(value: T) => { value: T };
 
 // ==================== Injection Key ====================
 
@@ -97,16 +101,21 @@ export function createSigillumPlugin(options: SigillumPluginOptions) {
 
   return {
     install(app: VueApp) {
-      // 初始化 recorder（单例）
-      const recorder = getRecorder(recorderOptions);
+      if (!isBrowser()) return;
 
-      // 通过 provide 注入，组件中可以通过 inject 获取
+      const recorder = getRecorder(recorderOptions);
       app.provide(SIGILLUM_RECORDER_KEY, recorder);
 
-      // 自动开始录制
       if (autoStart) {
         recorder.start();
       }
+
+      // app 卸载时同步释放资源（destroy 不触发上传，避免 async 竞态）
+      const originalUnmount = app.unmount.bind(app);
+      app.unmount = () => {
+        recorder.destroy();
+        originalUnmount();
+      };
     },
   };
 }
@@ -137,6 +146,8 @@ export function createSigillumPlugin(options: SigillumPluginOptions) {
  * ```
  */
 export function useSessionRecorder(inject: InjectFn): SessionRecorder | null {
+  if (!isBrowser()) return null;
+
   // 优先从 provide/inject 获取
   const injected = inject<SessionRecorder>(SIGILLUM_RECORDER_KEY);
   if (injected) {
@@ -151,30 +162,42 @@ export function useSessionRecorder(inject: InjectFn): SessionRecorder | null {
   return null;
 }
 
+/** useAutoRecord 的配置 */
+export interface UseAutoRecordVueOptions {
+  /** 传入 Vue 的 ref 函数以获得响应式 status / sessionId */
+  ref?: RefFn;
+  /** 录制器配置（仅在未初始化时使用） */
+  recorderOptions?: SessionRecorderOptions;
+}
+
 /**
  * 在 Vue 组件中自动管理录制生命周期
  *
  * - 组件挂载时自动开始录制（如果未在录制中）
  * - 组件卸载时自动停止录制
+ * - 传入 `ref` 后 `status` 和 `sessionId` 变为响应式 Ref
  *
  * @param inject - Vue 的 inject 函数
  * @param onUnmounted - Vue 的 onUnmounted 函数
- * @param options - 可选的 recorder 配置（仅在未初始化时使用）
+ * @param options - 配置项（包含可选的 ref 和 recorderOptions）
  *
  * @example
  * ```vue
  * <script setup>
- * import { inject, onUnmounted } from 'vue';
+ * import { inject, onUnmounted, ref } from 'vue';
  * import { useAutoRecord } from 'sigillum-js/vue';
  *
  * const { recorder, status, sessionId, addTag } = useAutoRecord(inject, onUnmounted, {
- *   onUpload: async (data) => {
- *     await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
- *     return { success: true };
+ *   ref, // 传入后 status / sessionId 自动成为 Ref<T>
+ *   recorderOptions: {
+ *     onUpload: async (data) => {
+ *       await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+ *       return { success: true };
+ *     },
  *   },
  * });
  *
- * // 添加标记
+ * // 模板中直接使用 {{ status }} {{ sessionId }}
  * addTag('page-loaded', { route: '/home' });
  * </script>
  * ```
@@ -182,43 +205,81 @@ export function useSessionRecorder(inject: InjectFn): SessionRecorder | null {
 export function useAutoRecord(
   inject: InjectFn,
   onUnmounted: OnUnmountedFn,
-  options?: SessionRecorderOptions,
+  options?: SessionRecorderOptions | UseAutoRecordVueOptions,
 ) {
-  // 获取或创建 recorder
-  let recorder = useSessionRecorder(inject);
+  // 兼容旧签名：第三个参数直接传 SessionRecorderOptions
+  const isNewOptions = options && (
+    ('ref' in options && typeof (options as any).ref === 'function') ||
+    'recorderOptions' in options
+  );
+  const vueOptions = isNewOptions ? (options as UseAutoRecordVueOptions) : undefined;
+  const recorderOptions = isNewOptions
+    ? (options as UseAutoRecordVueOptions).recorderOptions
+    : (options as SessionRecorderOptions | undefined);
+  const refFn = vueOptions?.ref;
 
-  if (!recorder && options) {
-    recorder = getRecorder(options);
+  let recorder = useSessionRecorder(inject);
+  if (!recorder && recorderOptions) {
+    recorder = getRecorder(recorderOptions);
   }
 
-  // 自动开始录制
   if (recorder && recorder.getStatus() === 'idle') {
     recorder.start();
   }
 
-  // 组件卸载时停止
+  // 响应式状态（有 ref 时使用 Vue Ref，否则降级为 getter）
+  const statusRef = refFn ? refFn<RecordingStatus>(recorder?.getStatus() || 'idle') : null;
+  const sessionIdRef = refFn ? refFn<string>(recorder?.getSessionId() || '') : null;
+
+  let origOnStatusChange: any;
+  let didWrapOnStatusChange = false;
+  if (recorder && refFn && statusRef && sessionIdRef) {
+    didWrapOnStatusChange = true;
+    origOnStatusChange = (recorder as any).options?.onStatusChange;
+    (recorder as any).options.onStatusChange = (
+      newStatus: RecordingStatus,
+      prevStatus: RecordingStatus,
+    ) => {
+      statusRef.value = newStatus;
+      sessionIdRef.value = recorder!.getSessionId();
+      try { origOnStatusChange?.(newStatus, prevStatus); } catch { /* */ }
+    };
+  }
+
   onUnmounted(() => {
+    if (recorder && didWrapOnStatusChange && (recorder as any).options) {
+      (recorder as any).options.onStatusChange = origOnStatusChange;
+    }
     if (recorder && (recorder.getStatus() === 'recording' || recorder.getStatus() === 'paused')) {
-      recorder.stop();
+      recorder.stop().catch(() => {});
     }
   });
 
-  return {
-    /** recorder 实例 */
+  const result: Record<string, any> = {
     recorder,
-    /** 获取当前状态 */
-    get status(): RecordingStatus {
-      return recorder?.getStatus() || 'idle';
-    },
-    /** 获取当前 sessionId */
-    get sessionId(): string {
-      return recorder?.getSessionId() || '';
-    },
-    /** 添加标记 */
     addTag(name: string, data?: Record<string, any>) {
       recorder?.addTag(name, data);
     },
+    identify(userId: string, traits?: Record<string, any>) {
+      recorder?.identify(userId, traits);
+    },
   };
+
+  if (statusRef) {
+    result.status = statusRef;
+    result.sessionId = sessionIdRef!;
+  } else {
+    Object.defineProperty(result, 'status', {
+      get(): RecordingStatus { return recorder?.getStatus() || 'idle'; },
+      enumerable: true,
+    });
+    Object.defineProperty(result, 'sessionId', {
+      get(): string { return recorder?.getSessionId() || ''; },
+      enumerable: true,
+    });
+  }
+
+  return result as any;
 }
 
 // ==================== 重新导出 ====================

@@ -119,11 +119,14 @@
  * </template>
  *
  * <script setup>
- * import { inject, onUnmounted } from 'vue';
+ * import { inject, onUnmounted, ref } from 'vue';
  * import { useAutoRecord } from 'sigillum-js/vue';
  *
- * // 组件挂载时自动开始录制，卸载时自动停止
- * const { status, sessionId, addTag } = useAutoRecord(inject, onUnmounted);
+ * // 传入 ref 获得响应式 status/sessionId，模板中自动更新
+ * const { status, sessionId, addTag, identify } = useAutoRecord(inject, onUnmounted, { ref });
+ *
+ * // 关联用户身份
+ * identify('user-123', { plan: 'pro' });
  * </script>
  * ```
  */
@@ -158,8 +161,7 @@
  * });
  *
  * onUnmounted(() => {
- *   const recorder = getRecorder();
- *   recorder.stop();
+ *   getRecorder()?.stop();
  * });
  * </script>
  * ```
@@ -198,7 +200,7 @@
  *     mouseMoveInterval: isProd ? 100 : 50,
  *     recordCanvas: false,
  *     privacy: {
- *       maskInputTypes: ['password', 'credit-card', 'cvv'],
+ *       maskInputOptions: { password: true },
  *       maskTextSelector: '.sensitive',
  *     },
  *   },

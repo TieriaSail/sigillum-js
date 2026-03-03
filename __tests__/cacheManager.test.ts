@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { CacheManager } from '../CacheManager';
 
@@ -13,7 +13,11 @@ describe('CacheManager', () => {
     await cache.clear();
   });
 
-  const makeCachedRecording = (id: string, startTime = 1000) => ({
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const makeCachedRecording = (id: string, startTime = 1000, updatedAt?: number) => ({
     id,
     events: [{ type: 2, data: {}, timestamp: startTime }],
     tags: [{ name: 'test', timestamp: startTime + 100 }],
@@ -22,7 +26,7 @@ describe('CacheManager', () => {
     userAgent: 'test-agent',
     screenResolution: '1920x1080',
     viewport: { width: 1280, height: 720 },
-    updatedAt: startTime + 500,
+    updatedAt: updatedAt ?? startTime + 500,
   });
 
   describe('save & getAll', () => {
@@ -120,6 +124,140 @@ describe('CacheManager', () => {
       await expect(fallbackCache.clear()).resolves.toBeUndefined();
 
       globalThis.indexedDB = originalIndexedDB;
+    });
+  });
+
+  describe('过期清理 (maxAge)', () => {
+    it('getAll 应过滤掉超过 maxAge 的条目', async () => {
+      const realNow = Date.now();
+      const maxAge = 3000;
+      const expiredCache = new CacheManager(10, maxAge);
+      await new Promise(r => setTimeout(r, 50));
+      await expiredCache.clear();
+
+      // save() 内部用 Date.now() 设置 updatedAt，通过 mock 控制时间
+      // 写入"旧"数据：模拟 5 秒前保存
+      vi.spyOn(Date, 'now').mockReturnValue(realNow - 5000);
+      await expiredCache.save(makeCachedRecording('old', 100));
+      await new Promise(r => setTimeout(r, 30));
+
+      // 写入"新"数据：恢复当前时间
+      vi.spyOn(Date, 'now').mockReturnValue(realNow);
+      await expiredCache.save(makeCachedRecording('new', 200));
+      await new Promise(r => setTimeout(r, 30));
+
+      vi.restoreAllMocks();
+
+      const all = await expiredCache.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe('new');
+    });
+
+    it('默认 maxAge 为 7 天', async () => {
+      const realNow = Date.now();
+      const defaultCache = new CacheManager(10);
+      await new Promise(r => setTimeout(r, 50));
+      await defaultCache.clear();
+
+      // 6 天前的数据应保留
+      vi.spyOn(Date, 'now').mockReturnValue(realNow - 6 * 24 * 60 * 60 * 1000);
+      await defaultCache.save(makeCachedRecording('recent', 100));
+      await new Promise(r => setTimeout(r, 30));
+
+      // 8 天前的数据应被清理
+      vi.spyOn(Date, 'now').mockReturnValue(realNow - 8 * 24 * 60 * 60 * 1000);
+      await defaultCache.save(makeCachedRecording('old', 200));
+      await new Promise(r => setTimeout(r, 30));
+
+      vi.restoreAllMocks();
+
+      const all = await defaultCache.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe('recent');
+    });
+
+    it('初始化时应执行一次过期清理', async () => {
+      const realNow = Date.now();
+      // 先用一个长 maxAge 写入"旧数据"
+      const setupCache = new CacheManager(10, 999999999);
+      await new Promise(r => setTimeout(r, 50));
+      await setupCache.clear();
+
+      // 写入一条"5秒前"的数据
+      vi.spyOn(Date, 'now').mockReturnValue(realNow - 5000);
+      await setupCache.save(makeCachedRecording('expired', 100));
+      await new Promise(r => setTimeout(r, 30));
+
+      // 写入一条"当前"的数据
+      vi.spyOn(Date, 'now').mockReturnValue(realNow);
+      await setupCache.save(makeCachedRecording('valid', 200));
+      await new Promise(r => setTimeout(r, 30));
+
+      vi.restoreAllMocks();
+
+      // 用短 maxAge 创建新 cache，初始化时自动 cleanup
+      const strictCache = new CacheManager(10, 2000);
+      await new Promise(r => setTimeout(r, 150));
+
+      const all = await strictCache.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe('valid');
+    });
+  });
+
+  describe('条数淘汰', () => {
+    it('超过 maxItems 时应淘汰最旧的条目', async () => {
+      const smallCache = new CacheManager(3);
+      await new Promise(r => setTimeout(r, 50));
+      await smallCache.clear();
+
+      const now = Date.now();
+      await smallCache.save(makeCachedRecording('s1', 100, now - 3000));
+      await smallCache.save(makeCachedRecording('s2', 200, now - 2000));
+      await smallCache.save(makeCachedRecording('s3', 300, now - 1000));
+      // 等待 IDB 事务完成
+      await new Promise(r => setTimeout(r, 50));
+
+      // 第 4 条写入时应淘汰 s1
+      await smallCache.save(makeCachedRecording('s4', 400, now));
+      await new Promise(r => setTimeout(r, 50));
+
+      const all = await smallCache.getAll();
+      const ids = all.map(a => a.id).sort();
+      expect(ids).not.toContain('s1');
+      expect(all.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe('存储空间预警清理', () => {
+    it('navigator.storage.estimate 不可用时不报错', async () => {
+      // 默认 jsdom 环境没有 navigator.storage.estimate
+      // 创建新 cache 触发 cleanup，不应报错
+      const newCache = new CacheManager(10, 1000);
+      await new Promise(r => setTimeout(r, 100));
+      await expect(newCache.getAll()).resolves.toBeDefined();
+    });
+
+    it('存储使用率低于阈值时不清理', async () => {
+      const mockEstimate = vi.fn().mockResolvedValue({
+        usage: 100,
+        quota: 1000, // 10% usage, well below 80%
+      });
+      vi.stubGlobal('navigator', {
+        ...globalThis.navigator,
+        storage: { estimate: mockEstimate },
+      });
+
+      const now = Date.now();
+      await cache.save(makeCachedRecording('s1', 100, now));
+      await cache.save(makeCachedRecording('s2', 200, now));
+
+      // 手动触发 cleanup 通过重建
+      const newCache = new CacheManager(10);
+      await new Promise(r => setTimeout(r, 100));
+
+      const all = await newCache.getAll();
+      expect(all.length).toBe(2);
     });
   });
 });

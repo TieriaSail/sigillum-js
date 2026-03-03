@@ -53,7 +53,7 @@ describe('UI Components', () => {
     it('应显示会话信息', () => {
       render(<SessionInfo data={sampleServerData} />);
 
-      expect(screen.getByText('会话信息')).toBeTruthy();
+      expect(screen.getByText('Session Info')).toBeTruthy();
       expect(screen.getByText('sess-123')).toBeTruthy();
       expect(screen.getByText('https://example.com/page')).toBeTruthy();
       expect(screen.getByText('1920x1080')).toBeTruthy();
@@ -72,9 +72,8 @@ describe('UI Components', () => {
 
     it('应显示事件数量和标记数量', () => {
       render(<SessionInfo data={sampleServerData} />);
-      // 事件数量 = 1, 标记数量 = 1，两者都显示 "1"
-      expect(screen.getByText('事件数量:')).toBeTruthy();
-      expect(screen.getByText('标记数量:')).toBeTruthy();
+      expect(screen.getByText('Event Count:')).toBeTruthy();
+      expect(screen.getByText('Tag Count:')).toBeTruthy();
       const ones = screen.getAllByText('1');
       expect(ones.length).toBe(2); // 事件 1 + 标记 1
     });
@@ -114,7 +113,7 @@ describe('UI Components', () => {
   describe('ReplayPlayer', () => {
     it('无数据时应显示"无录制数据"', () => {
       render(<ReplayPlayer data={null as any} />);
-      expect(screen.getByText('无录制数据')).toBeTruthy();
+      expect(screen.getByText('No recording data')).toBeTruthy();
     });
 
     it('有数据时应渲染容器', () => {
@@ -158,19 +157,19 @@ describe('UI Components', () => {
       render(<ReplayPage data={sampleServerData} />);
 
       // SessionInfo 应该可见
-      expect(screen.getByText('会话信息')).toBeTruthy();
+      expect(screen.getByText('Session Info')).toBeTruthy();
       expect(screen.getByText('sess-123')).toBeTruthy();
     });
 
     it('showInfo=false 应隐藏 SessionInfo', () => {
       render(<ReplayPage data={sampleServerData} showInfo={false} />);
 
-      expect(screen.queryByText('会话信息')).toBeNull();
+      expect(screen.queryByText('Session Info')).toBeNull();
     });
 
     it('showInfo 默认为 true', () => {
       render(<ReplayPage data={sampleServerData} />);
-      expect(screen.getByText('会话信息')).toBeTruthy();
+      expect(screen.getByText('Session Info')).toBeTruthy();
     });
   });
 });

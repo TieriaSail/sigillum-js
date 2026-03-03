@@ -29,6 +29,7 @@ import type {
   RecordingSummary,
   RouteChange,
   RecordingChunk,
+  UserIdentity,
 } from './types';
 import { FieldMapper } from './FieldMapper';
 import { CacheManager } from './CacheManager';
@@ -40,6 +41,7 @@ import { checkCompatibility, isBrowser } from './compatibility';
 const DEFAULT_OPTIONS: Partial<SessionRecorderOptions> = {
   enabled: true,
   maxDuration: 30 * 60 * 1000, // 30 分钟
+  maxEvents: 50000,
   maxRetries: 3,
   uploadOnUnload: true,
   debug: false,
@@ -131,6 +133,8 @@ export class SessionRecorder {
   private tags: TagInfo[] = [];
   private sessionId: string = '';
   private startTime: number = 0;
+  private endTime: number = 0;
+  private pausedAt: number = 0;
   private status: RecordingStatus = 'idle';
 
   private cacheTimer: number | null = null;
@@ -142,6 +146,7 @@ export class SessionRecorder {
 
   // ========== 元数据 ==========
   private metadata: SessionMetadata | null = null;
+  private pendingIdentity: UserIdentity | null = null;
 
   // ========== 路由追踪 ==========
   private routeChanges: RouteChange[] = [];
@@ -159,6 +164,7 @@ export class SessionRecorder {
   private chunkTimer: number | null = null;
   private chunkIndex: number = 0;
   private lastChunkEventIndex: number = 0;
+  private lastCachedEventCount: number = 0;
 
   constructor(options: SessionRecorderOptions) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -174,16 +180,19 @@ export class SessionRecorder {
     const compatibility = checkCompatibility();
     if (!compatibility.supported) {
       this.disabled = true;
-      this.options.onUnsupported?.(compatibility.reason || 'Browser not supported');
+      try {
+        this.options.onUnsupported?.(compatibility.reason || 'Browser not supported');
+      } catch {
+        // 静默处理
+      }
       this.log('Browser not supported:', compatibility.reason);
       return;
     }
 
     // 初始化缓存管理器
     if (this.options.cache?.enabled !== false) {
-      this.cacheManager = new CacheManager(this.options.cache?.maxItems);
-      // 尝试恢复之前未完成的录制
-      this.recoverCachedRecordings();
+      this.cacheManager = new CacheManager(this.options.cache?.maxItems, this.options.cache?.maxAge);
+      this.recoverCachedRecordings().catch(() => {});
     }
   }
 
@@ -245,7 +254,7 @@ export class SessionRecorder {
    * 生成会话 ID
    */
   private generateSessionId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   }
 
   // ==================== 元数据采集 ====================
@@ -395,7 +404,11 @@ export class SessionRecorder {
       routeChangeCount: this.routeChanges.length,
       routeChanges: [...this.routeChanges],
       tagCount: this.tags.length,
-      duration: Date.now() - this.startTime,
+      duration: (() => {
+        const now = this.endTime > 0 ? this.endTime : Date.now();
+        const pauseOffset = this.pausedAt > 0 ? (now - this.pausedAt) : 0;
+        return now - this.startTime - pauseOffset;
+      })(),
       visitedUrls: Array.from(visitedUrls),
     };
   }
@@ -409,17 +422,17 @@ export class SessionRecorder {
     const config = this.options.chunkedUpload;
     if (!config?.enabled || !this.options.onChunkUpload) return;
 
-    const interval = config.interval || 60000;
+    const interval = config.interval ?? 60000;
 
     this.chunkTimer = setInterval(() => {
-      this.uploadChunk(false);
+      this.uploadChunk(false).catch((err) => this.log('Chunk timer error:', err));
     }, interval) as unknown as number;
 
     this.log('Chunked upload enabled, interval:', interval);
   }
 
   /**
-   * 上传一个分段
+   * 上传一个分段（含重试）
    */
   private async uploadChunk(isFinal: boolean): Promise<void> {
     if (!this.options.onChunkUpload) return;
@@ -442,16 +455,29 @@ export class SessionRecorder {
     this.lastChunkEventIndex = this.events.length;
     this.chunkIndex++;
 
-    try {
-      const result = await this.options.onChunkUpload(chunk);
-      if (result.success) {
-        this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
-      } else {
-        this.log(`Chunk ${chunk.chunkIndex} upload failed:`, result.error);
+    const maxRetries = this.options.maxRetries ?? 3;
+    let retries = 0;
+
+    while (retries <= maxRetries) {
+      try {
+        const result = await this.options.onChunkUpload(chunk);
+        if (result.success) {
+          this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
+          return;
+        }
+        if (!result.shouldRetry) {
+          this.log(`Chunk ${chunk.chunkIndex} upload failed (no retry):`, result.error);
+          return;
+        }
+      } catch (error) {
+        this.log(`Chunk ${chunk.chunkIndex} upload error (attempt ${retries + 1}):`, error);
+        if (retries >= maxRetries) {
+          this.emitError(error);
+          return;
+        }
       }
-    } catch (error) {
-      this.log('Chunk upload error:', error);
-      this.emitError(error);
+      retries++;
+      await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries - 1), 10000)));
     }
   }
 
@@ -466,21 +492,26 @@ export class SessionRecorder {
 
     const options: Record<string, any> = {
       emit: (event: EventWithTime) => {
-        this.events.push(event);
-
-        // 分析行为统计
-        this.analyzeEvent(event);
-
-        // 触发事件回调
         try {
+          this.events.push(event);
+          this.analyzeEvent(event);
+
+          // 事件数量上限保护
+          const maxEvents = this.options.maxEvents ?? 50000;
+          if (this.events.length >= maxEvents) {
+            this.log(`Max events (${maxEvents}) reached, stopping recording`);
+            this.stop().catch((err) => this.log('Error stopping after maxEvents:', err));
+            return;
+          }
+
           this.options.onEventEmit?.(event, this.events.length);
         } catch (err) {
-          this.log('Error in onEventEmit callback:', err);
+          this.log('Error in emit callback:', err);
         }
       },
 
       // 快照配置
-      checkoutEveryNms: rrwebConfig.checkoutEveryNms || 5 * 60 * 1000,
+      checkoutEveryNms: rrwebConfig.checkoutEveryNms ?? 5 * 60 * 1000,
       checkoutEveryNth: rrwebConfig.checkoutEveryNth,
 
       // Canvas
@@ -489,10 +520,10 @@ export class SessionRecorder {
       // 采样策略
       sampling: {
         mousemove: rrwebConfig.recordMouseMove !== false
-          ? rrwebConfig.mouseMoveInterval || 50
+          ? rrwebConfig.mouseMoveInterval ?? 50
           : false,
         scroll: rrwebConfig.recordScroll !== false
-          ? rrwebConfig.scrollInterval || 150
+          ? rrwebConfig.scrollInterval ?? 150
           : 150,
         input: rrwebConfig.recordInput !== false ? 'last' : undefined,
         media: rrwebConfig.recordMedia !== false ? 800 : undefined,
@@ -558,21 +589,22 @@ export class SessionRecorder {
       return;
     }
 
-    // 如果是暂停状态，不重新初始化
+    // 如果是暂停状态，不重新初始化；否则清空上一次的数据
     if (this.status !== 'paused') {
+      this.resetState();
       this.sessionId = this.generateSessionId();
       this.startTime = Date.now();
-      this.events = [];
-      this.tags = [];
-      this.routeChanges = [];
-      this.clickCount = 0;
-      this.inputCount = 0;
-      this.scrollCount = 0;
-      this.chunkIndex = 0;
-      this.lastChunkEventIndex = 0;
 
       // 采集元数据
       this.metadata = this.collectMetadata();
+      if (this.pendingIdentity) {
+        this.metadata.user = this.pendingIdentity;
+        this.pendingIdentity = null;
+      }
+    } else if (this.pausedAt > 0) {
+      // 抵消暂停时长，确保 maxDuration 和 duration 不包含暂停时间
+      this.startTime += (Date.now() - this.pausedAt);
+      this.pausedAt = 0;
     }
 
     try {
@@ -592,18 +624,26 @@ export class SessionRecorder {
       // 启动分段上传定时器
       this.startChunkTimer();
 
-      // 设置最大录制时长
+      // 设置最大录制时长（resume 时扣除已录制的时间）
       if (this.options.maxDuration) {
-        this.maxDurationTimer = setTimeout(() => {
-          if (this.status === 'recording') {
-            this.log('Max duration reached, stopping');
-            this.stop();
-          }
-        }, this.options.maxDuration) as unknown as number;
+        const elapsed = this.startTime > 0 ? Date.now() - this.startTime : 0;
+        const remaining = Math.max(0, this.options.maxDuration - elapsed);
+        if (remaining <= 0) {
+          this.log('Max duration already exceeded, stopping');
+          this.stop().catch((err) => this.log('Error stopping after maxDuration:', err));
+        } else {
+          this.maxDurationTimer = setTimeout(() => {
+            if (this.status === 'recording') {
+              this.log('Max duration reached, stopping');
+              this.stop().catch((err) => this.log('Error stopping after maxDuration:', err));
+            }
+          }, remaining) as unknown as number;
+        }
       }
 
-      // 注册页面卸载处理
+      // 注册页面卸载处理（先清理旧的，防止 pause/resume 泄漏监听器）
       if (this.options.uploadOnUnload !== false) {
+        this.unregisterUnloadHandler();
         this.registerUnloadHandler();
       }
     } catch (error) {
@@ -614,7 +654,9 @@ export class SessionRecorder {
   }
 
   /**
-   * 停止录制并上传
+   * 停止录制
+   * 停止后数据保留在内存中，可通过 exportRecording() 导出
+   * 下次 start() 或手动 clearRecording() 时清空
    */
   async stop(): Promise<void> {
     if (this.status !== 'recording' && this.status !== 'paused') {
@@ -636,28 +678,37 @@ export class SessionRecorder {
     // 移除卸载处理
     this.unregisterUnloadHandler();
 
-    const endTime = Date.now();
+    // 如果从 paused 状态 stop，补偿暂停时长
+    if (this.pausedAt > 0) {
+      this.startTime += (Date.now() - this.pausedAt);
+      this.pausedAt = 0;
+    }
+
+    this.endTime = Date.now();
     this.setStatus('stopped');
 
-    this.log('Stopped recording, uploading...');
+    try {
+      // 删除 IndexedDB 缓存（数据已在内存中）
+      if (this.cacheManager) {
+        await this.cacheManager.delete(this.sessionId);
+      }
 
-    // 删除缓存
-    if (this.cacheManager) {
-      await this.cacheManager.delete(this.sessionId);
+      // 如果启用了分段上传，上传最后一个分段
+      if (this.options.chunkedUpload?.enabled && this.options.onChunkUpload) {
+        await this.uploadChunk(true);
+      }
+
+      // 上传完整数据（仅在配置了 onUpload 时）
+      if (this.options.onUpload && this.events.length > 0) {
+        await this.upload(this.endTime);
+        this.log('Stopped recording, upload complete');
+      } else {
+        this.log('Stopped recording, data retained for export');
+      }
+    } catch (error) {
+      this.log('Error during stop upload phase:', error);
+      this.emitError(error);
     }
-
-    // 如果启用了分段上传，上传最后一个分段
-    if (this.options.chunkedUpload?.enabled && this.options.onChunkUpload) {
-      await this.uploadChunk(true);
-    }
-
-    // 上传完整数据
-    if (this.events.length > 0) {
-      await this.upload(endTime);
-    }
-
-    // 重置状态
-    this.resetState();
   }
 
   /**
@@ -675,6 +726,7 @@ export class SessionRecorder {
 
     this.clearTimers();
     this.stopRouteTracking();
+    this.pausedAt = Date.now();
     this.setStatus('paused');
     this.log('Paused recording');
   }
@@ -695,6 +747,8 @@ export class SessionRecorder {
    * 上传录制数据
    */
   private async upload(endTime: number): Promise<void> {
+    if (!this.options.onUpload) return;
+
     const rawData: RawRecordingData = {
       sessionId: this.sessionId,
       events: this.events,
@@ -713,19 +767,23 @@ export class SessionRecorder {
       summary: this.buildSummary(),
     };
 
-    // 字段映射
-    let serverData = this.fieldMapper.toServer(rawData);
-
-    // 上传前处理
-    if (this.options.beforeUpload) {
-      serverData = this.options.beforeUpload(serverData);
+    let serverData: Record<string, any>;
+    try {
+      serverData = this.fieldMapper.toServer(rawData);
+      if (this.options.beforeUpload) {
+        serverData = this.options.beforeUpload(serverData);
+      }
+    } catch (error) {
+      this.log('Error in data preparation (fieldMapper/beforeUpload):', error);
+      this.emitError(error);
+      return;
     }
 
-    // 上传（带重试）
+    // 上传（带重试，与 uploadChunk 模式一致）
     let retries = 0;
-    const maxRetries = this.options.maxRetries || 3;
+    const maxRetries = this.options.maxRetries ?? 3;
 
-    while (retries < maxRetries) {
+    while (retries <= maxRetries) {
       try {
         const result = await this.options.onUpload(serverData);
         if (result.success) {
@@ -734,18 +792,15 @@ export class SessionRecorder {
         }
         throw new Error(result.error || 'Upload failed');
       } catch (error) {
-        retries++;
-        this.log(`Upload failed (attempt ${retries}/${maxRetries}):`, error);
-
+        this.log(`Upload failed (attempt ${retries + 1}/${maxRetries + 1}):`, error);
         if (retries >= maxRetries) {
           this.log('Max retries reached, upload failed');
           this.emitError(error);
           return;
         }
-
-        // 指数退避
-        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retries) * 1000));
       }
+      retries++;
+      await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retries - 1) * 1000));
     }
   }
 
@@ -757,7 +812,7 @@ export class SessionRecorder {
       return;
     }
 
-    const interval = this.options.cache?.saveInterval || 5000;
+    const interval = this.options.cache?.saveInterval ?? 5000;
 
     this.cacheTimer = setInterval(() => {
       this.saveToCache();
@@ -765,17 +820,24 @@ export class SessionRecorder {
   }
 
   /**
-   * 保存到缓存
+   * 保存到缓存（跳过无新增事件的情况，避免无意义写入）
+   * 直接传引用给 IndexedDB，由浏览器做 structured clone（比 JS 数组展开高效）
    */
   private saveToCache(): void {
     if (!this.cacheManager || this.events.length === 0) {
       return;
     }
 
+    // 无新增事件则跳过，避免每个周期都做一次 IndexedDB 写入
+    if (this.events.length === this.lastCachedEventCount) {
+      return;
+    }
+    this.lastCachedEventCount = this.events.length;
+
     this.cacheManager.save({
       id: this.sessionId,
-      events: [...this.events],
-      tags: [...this.tags],
+      events: this.events,
+      tags: this.tags,
       startTime: this.startTime,
       url: window.location.href,
       userAgent: navigator.userAgent,
@@ -785,13 +847,14 @@ export class SessionRecorder {
         height: window.innerHeight,
       },
       updatedAt: Date.now(),
-    });
+    }).catch(() => {});
 
     this.log('Saved to cache');
   }
 
   /**
    * 恢复缓存的录制
+   * 仅在配置了 onUpload 时才尝试上传，否则仅清理过期缓存
    */
   private async recoverCachedRecordings(): Promise<void> {
     if (!this.cacheManager) return;
@@ -799,28 +862,33 @@ export class SessionRecorder {
     const cached = await this.cacheManager.getAll();
     if (cached.length === 0) return;
 
+    if (!this.options.onUpload) {
+      this.log(`Found ${cached.length} cached recordings, no onUpload configured, skipping recovery`);
+      return;
+    }
+
     this.log(`Found ${cached.length} cached recordings, uploading...`);
 
     for (const item of cached) {
-      const rawData: RawRecordingData = {
-        ...this.cacheManager.toRawRecordingData(item),
-        endTime: item.updatedAt,
-        duration: item.updatedAt - item.startTime,
-      };
-
-      let serverData = this.fieldMapper.toServer(rawData);
-      if (this.options.beforeUpload) {
-        serverData = this.options.beforeUpload(serverData);
-      }
-
       try {
+        const rawData: RawRecordingData = {
+          ...this.cacheManager.toRawRecordingData(item),
+          endTime: item.updatedAt,
+          duration: item.updatedAt - item.startTime,
+        };
+
+        let serverData = this.fieldMapper.toServer(rawData);
+        if (this.options.beforeUpload) {
+          serverData = this.options.beforeUpload(serverData);
+        }
+
         const result = await this.options.onUpload(serverData);
         if (result.success) {
           await this.cacheManager.delete(item.id);
           this.log('Recovered and uploaded cached recording:', item.id);
         }
       } catch (error) {
-        this.log('Failed to upload cached recording:', error);
+        this.log('Failed to recover cached recording:', error);
       }
     }
   }
@@ -848,11 +916,33 @@ export class SessionRecorder {
    */
   private registerUnloadHandler(): void {
     this.unloadHandler = () => {
-      if (this.status === 'recording' && this.events.length > 0) {
-        // 保存到缓存（下次打开时恢复并上传）
-        this.saveToCache();
-        this.log('Page unload, saved to cache');
+      if (this.status !== 'recording' || this.events.length === 0) return;
+
+      // 优先使用 sendBeacon 投递未上传数据
+      if (this.options.beaconUrl && typeof navigator.sendBeacon === 'function') {
+        try {
+          const payload = JSON.stringify({
+            sessionId: this.sessionId,
+            events: this.events.slice(this.lastChunkEventIndex),
+            metadata: this.metadata || undefined,
+            summary: this.buildSummary(),
+            timestamp: Date.now(),
+          });
+          const sent = navigator.sendBeacon(
+            this.options.beaconUrl,
+            new Blob([payload], { type: 'application/json' }),
+          );
+          if (sent) {
+            this.log('Page unload, sent via sendBeacon');
+            return;
+          }
+        } catch {
+          // sendBeacon 失败，降级到缓存
+        }
       }
+
+      this.saveToCache();
+      this.log('Page unload, saved to cache');
     };
 
     window.addEventListener('beforeunload', this.unloadHandler);
@@ -876,8 +966,12 @@ export class SessionRecorder {
     this.tags = [];
     this.sessionId = '';
     this.startTime = 0;
+    this.endTime = 0;
+    this.pausedAt = 0;
     this.status = 'idle';
     this.metadata = null;
+    // pendingIdentity is intentionally NOT cleared here — it survives reset so
+    // identify() called before start() is applied when metadata is collected
     this.routeChanges = [];
     this.currentUrl = '';
     this.clickCount = 0;
@@ -885,6 +979,7 @@ export class SessionRecorder {
     this.scrollCount = 0;
     this.chunkIndex = 0;
     this.lastChunkEventIndex = 0;
+    this.lastCachedEventCount = 0;
   }
 
   // ==================== 公开 API ====================
@@ -915,10 +1010,59 @@ export class SessionRecorder {
   }
 
   /**
+   * 关联用户身份，可在录制的任何阶段调用
+   * 身份信息会写入 metadata 并作为 rrweb 自定义事件记录到时间线
+   */
+  identify(userId: string, traits?: Record<string, any>): void {
+    if (!this.isEnabled()) return;
+
+    const identity: UserIdentity = {
+      userId,
+      traits,
+      identifiedAt: Date.now(),
+    };
+
+    if (this.metadata) {
+      this.metadata.user = identity;
+    } else {
+      this.pendingIdentity = identity;
+    }
+
+    if (this.status === 'recording') {
+      try {
+        record.addCustomEvent('sigillum-identify', { userId, traits });
+      } catch {
+        this.events.push({
+          type: 5,
+          data: { tag: 'sigillum-identify', payload: { userId, traits } },
+          timestamp: Date.now(),
+        } as any);
+      }
+    }
+
+    this.log('User identified:', userId);
+  }
+
+  /**
    * 获取事件数量
    */
   getEventCount(): number {
     return this.events.length;
+  }
+
+  /**
+   * 估算当前录制数据在内存中的大小（bytes）
+   * 基于 JSON 序列化估算，适合用于 UI 展示或触发自定义容量告警
+   */
+  getEstimatedSize(): number {
+    if (this.events.length === 0) return 0;
+    try {
+      const sample = this.events.slice(-10);
+      const avgEventSize = new Blob([JSON.stringify(sample)]).size / sample.length;
+      return Math.round(avgEventSize * this.events.length);
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -1000,7 +1144,56 @@ export class SessionRecorder {
   }
 
   /**
-   * 销毁录制器
+   * 导出录制数据
+   * 仅在 stopped 状态下可用，返回完整的录制数据副本
+   * 数据包含事件流、元数据、行为摘要等，可直接用于 rrweb-player 回放
+   */
+  exportRecording(): RawRecordingData | null {
+    if (this.status !== 'stopped') {
+      this.log('exportRecording() requires stopped state, current:', this.status);
+      return null;
+    }
+
+    if (this.events.length === 0) {
+      this.log('No events to export');
+      return null;
+    }
+
+    return {
+      sessionId: this.sessionId,
+      events: [...this.events],
+      startTime: this.startTime,
+      endTime: this.endTime,
+      duration: this.endTime - this.startTime,
+      tags: [...this.tags],
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      screenResolution: `${window.screen.width}x${window.screen.height}`,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+      metadata: this.metadata || undefined,
+      summary: this.buildSummary(),
+    };
+  }
+
+  /**
+   * 手动清空录制数据
+   * 在 exportRecording() 之后调用，释放内存
+   */
+  clearRecording(): void {
+    if (this.status === 'recording') {
+      this.log('Cannot clear while recording');
+      return;
+    }
+    this.resetState();
+    this.log('Recording data cleared');
+  }
+
+  /**
+   * 销毁录制器，立即释放全部资源（同步操作，不触发上传）
+   * 与 stop() 不同，destroy() 不会尝试上传数据
    */
   destroy(): void {
     if (this.stopRecordingFn) {
@@ -1010,6 +1203,7 @@ export class SessionRecorder {
     this.clearTimers();
     this.stopRouteTracking();
     this.unregisterUnloadHandler();
+    this.setStatus('stopped');
     this.resetState();
     this.cacheManager = null;
     this.disabled = true;
@@ -1023,13 +1217,17 @@ let instance: SessionRecorder | null = null;
 
 /**
  * 获取录制器实例（单例）
+ * 未初始化时返回 null 并输出警告，不会抛出异常
  */
-export function getRecorder(options?: SessionRecorderOptions): SessionRecorder {
+export function getRecorder(options: SessionRecorderOptions): SessionRecorder;
+export function getRecorder(): SessionRecorder | null;
+export function getRecorder(options?: SessionRecorderOptions): SessionRecorder | null {
   if (!instance && options) {
     instance = new SessionRecorder(options);
   }
   if (!instance) {
-    throw new Error('[SessionRecorder] Not initialized. Call getRecorder(options) first.');
+    console.warn('[SessionRecorder] Not initialized. Call getRecorder(options) first.');
+    return null;
   }
   return instance;
 }
