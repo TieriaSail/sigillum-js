@@ -1,6 +1,6 @@
 {
   "name": "sigillum-js",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "A session recording library for user behavior replay and bug reproduction",
   "keywords": [
     "session-replay",
@@ -109,10 +109,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TieriaSail/sigillum-js"
+    "url": "git+https://github.com/TieriaSail/sigillum-js.git"
   },
   "bugs": {
     "url": "https://github.com/TieriaSail/sigillum-js/issues"
+  },
+  "publishConfig": {
+    "provenance": true,
+    "access": "public"
   },
   "sideEffects": false
 }
