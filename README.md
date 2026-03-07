@@ -18,12 +18,7 @@
 
 ## What it does
 
-Records the entire user session — every click, scroll, input, and page navigation — so you can replay exactly what happened. Fully self-hosted, no data leaves your servers.
-
-- **One install, zero config** — `npm install sigillum-js` and you're recording.
-- **Privacy-first** — Mask inputs, block elements, redact sensitive content. All built-in.
-- **Crash-safe** — IndexedDB caching recovers data even after page crashes.
-- **Framework support** — React, Vue, vanilla JS, jQuery.
+Records the entire user session — every click, scroll, input, and page navigation — so you can replay exactly what happened. Data stays on your own servers.
 
 ## Installation
 
