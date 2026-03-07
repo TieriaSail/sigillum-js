@@ -18,7 +18,7 @@
 
 ## What it does
 
-Records the entire user session — every click, scroll, input, and page navigation — so you can replay exactly what happened. Data stays on your own servers.
+Records the entire user session so you can replay every step of user behavior. Data stays on your own servers.
 
 ## Installation
 
