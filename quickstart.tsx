@@ -1,7 +1,5 @@
 /**
- * Session Recorder 快速开始
- *
- * 复制此代码到你的 app.tsx 或主入口文件即可开始使用
+ * Drop one of these components into your app.tsx to start recording.
  */
 
 import { useEffect } from 'react';
@@ -105,7 +103,6 @@ export function QuickStartProduction() {
         ['duration', 'duration_ms'],
       ],
 
-      // rrweb 配置
       rrwebConfig: {
         recordMouseMove: true,
         mouseMoveInterval: isProd ? 100 : 50,
@@ -116,17 +113,14 @@ export function QuickStartProduction() {
         },
       },
 
-      // 缓存配置
       cache: {
         enabled: true,
         saveInterval: 5000,
       },
 
-      // 其他配置
       maxDuration: 30 * 60 * 1000,
       maxRetries: 3,
 
-      // 上传函数
       onUpload: async (data) => {
         const response = await fetch('/api/recordings', {
           method: 'POST',
@@ -136,7 +130,7 @@ export function QuickStartProduction() {
         return { success: response.ok };
       },
 
-      // 不兼容时的处理
+      
       onUnsupported: (reason) => {
         // 可以上报到日志系统
         console.log('Session replay not supported:', reason);

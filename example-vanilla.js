@@ -1,10 +1,7 @@
 /**
- * Session Recorder - 原生 JS / jQuery / 非框架项目使用示例
+ * sigillum-js vanilla JS / jQuery examples.
  *
- * 核心 SessionRecorder 本身与框架无关，可直接在任何 JS 环境中使用。
- *
- * 安装依赖：
- * npm install sigillum-js rrweb
+ * npm install sigillum-js
  */
 
 // ==================== 示例 1: 最简使用 ====================

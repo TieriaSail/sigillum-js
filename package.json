@@ -1,7 +1,7 @@
 {
   "name": "sigillum-js",
   "version": "1.2.0",
-  "description": "A session recording library based on rrweb for user behavior replay and bug reproduction",
+  "description": "A session recording library for user behavior replay and bug reproduction",
   "keywords": [
     "session-replay",
     "session-recording",

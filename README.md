@@ -16,14 +16,14 @@
 
 ---
 
-## Why sigillum-js?
+## What it does
 
-Reproducing user-reported bugs from screenshots and vague descriptions is painful. **sigillum-js** records the entire user session — every click, scroll, input, and page navigation — so you can replay exactly what happened. Built on [rrweb](https://github.com/rrweb-io/rrweb), fully self-hosted, no data leaves your servers.
+Records the entire user session — every click, scroll, input, and page navigation — so you can replay exactly what happened. Fully self-hosted, no data leaves your servers.
 
-- **One install, zero config** — `npm install sigillum-js` and you're recording. No extra dependencies to manage.
+- **One install, zero config** — `npm install sigillum-js` and you're recording.
 - **Privacy-first** — Mask inputs, block elements, redact sensitive content. All built-in.
 - **Crash-safe** — IndexedDB caching recovers data even after page crashes.
-- **Framework support** — Works with React, Vue, vanilla JS, jQuery, etc.
+- **Framework support** — React, Vue, vanilla JS, jQuery.
 
 ## Installation
 
@@ -62,7 +62,7 @@ recorder.start();
 await recorder.stop();
 ```
 
-That's it. The recorder captures DOM mutations, mouse movement, scrolling, inputs, and route changes automatically. When `stop()` is called, data is uploaded via your `onUpload` callback.
+That's it. The recorder captures everything automatically — mouse movement, scrolling, inputs, and route changes. When `stop()` is called, data is uploaded via your `onUpload` callback.
 
 ### Local-only mode (no upload)
 

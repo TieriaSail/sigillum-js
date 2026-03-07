@@ -1,5 +1,5 @@
 /**
- * Session Recorder 使用示例
+ * sigillum-js React examples.
  */
 
 import { useEffect } from 'react';

@@ -1,8 +1,7 @@
 /**
- * Session Recorder - Vue 3 使用示例
+ * sigillum-js Vue 3 examples.
  *
- * 安装依赖：
- * npm install sigillum-js rrweb vue
+ * npm install sigillum-js
  */
 
 // ==================== 示例 1: Plugin 方式（推荐） ====================
@@ -194,7 +193,6 @@
  *     ['duration', 'duration_ms'],
  *   ],
  *
- *   // rrweb 配置
  *   rrwebConfig: {
  *     recordMouseMove: true,
  *     mouseMoveInterval: isProd ? 100 : 50,

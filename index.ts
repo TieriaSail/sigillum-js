@@ -1,15 +1,7 @@
 /**
- * sigillum-js
- * 会话录制系统
+ * sigillum-js — session recording library.
  *
- * 特性：
- * - 基于 rrweb 的用户行为录制
- * - 手动控制录制（start/stop/pause/resume）
- * - 字段映射（适配自定义后端数据结构）
- * - IndexedDB 缓存（防止页面崩溃丢失数据）
- * - 兼容性检查（不兼容时静默处理）
- * - React Hook 支持
- * - Vue 3 Plugin + Composition API 支持
+ * Record user behavior, replay it, debug faster.
  * - 内置回放 UI 组件
  *
  * @example
