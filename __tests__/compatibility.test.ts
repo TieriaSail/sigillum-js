@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { checkCompatibility, isBrowser } from '../compatibility';
+import { checkCompatibility, isBrowser } from '../src/compatibility';
 
 describe('compatibility', () => {
   describe('isBrowser', () => {

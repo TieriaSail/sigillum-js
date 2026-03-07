@@ -20,8 +20,8 @@ import {
   getRecorder,
   resetRecorder,
   isRecorderInitialized,
-} from '../vue';
-import { SessionRecorder } from '../SessionRecorder';
+} from '../src/vue';
+import { SessionRecorder } from '../src/SessionRecorder';
 
 describe('Vue 集成', () => {
   const defaultOptions = {

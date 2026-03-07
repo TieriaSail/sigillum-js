@@ -11,7 +11,7 @@ vi.mock('rrweb-player', () => {
   };
 });
 
-import { ReplayPlayer, SessionInfo, ReplayPage } from '../ui/index';
+import { ReplayPlayer, SessionInfo, ReplayPage } from '../src/ui/index';
 
 const sampleServerData = {
   sessionId: 'sess-123',

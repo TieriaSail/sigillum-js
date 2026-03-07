@@ -14,8 +14,8 @@ vi.mock('rrweb', () => ({
   }),
 }));
 
-import { useSessionRecorder, useAutoRecord } from '../react';
-import { resetRecorder, isRecorderInitialized } from '../SessionRecorder';
+import { useSessionRecorder, useAutoRecord } from '../src/react';
+import { resetRecorder, isRecorderInitialized } from '../src/SessionRecorder';
 
 const defaultOptions = {
   onUpload: vi.fn().mockResolvedValue({ success: true }),

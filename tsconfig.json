@@ -12,7 +12,7 @@
     "declaration": true,
     "declarationMap": true,
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "./src",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -23,18 +23,12 @@
     "allowSyntheticDefaultImports": true
   },
   "include": [
-    "*.ts",
-    "*.tsx",
-    "ui/**/*.ts",
-    "ui/**/*.tsx"
+    "src/**/*.ts",
+    "src/**/*.tsx"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "example.tsx",
-    "quickstart.tsx",
-    "__tests__",
-    "vitest.config.ts"
+    "dist"
   ]
 }
 

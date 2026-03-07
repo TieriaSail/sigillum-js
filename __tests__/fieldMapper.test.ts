@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { FieldMapper, createFieldMapper, DEFAULT_FIELD_MAPPING } from '../FieldMapper';
-import type { RawRecordingData } from '../types';
+import { FieldMapper, createFieldMapper, DEFAULT_FIELD_MAPPING } from '../src/FieldMapper';
+import type { RawRecordingData } from '../src/types';
 
 const sampleRaw: RawRecordingData = {
   sessionId: 'sess-123',

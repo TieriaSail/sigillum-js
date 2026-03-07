@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
-import { CacheManager } from '../CacheManager';
+import { CacheManager } from '../src/CacheManager';
 
 describe('CacheManager', () => {
   let cache: CacheManager;

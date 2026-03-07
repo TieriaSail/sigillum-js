@@ -26,7 +26,7 @@ import {
   getRecorder,
   resetRecorder,
   isRecorderInitialized,
-} from '../SessionRecorder';
+} from '../src/SessionRecorder';
 import { record } from 'rrweb';
 
 describe('SessionRecorder', () => {
