@@ -1,13 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 
-// Mock rrweb-player
+let lastRrwebPlayerProps: Record<string, unknown> | null = null;
+
+class MockRrwebPlayer {
+  constructor(opts: { target: HTMLElement; props: Record<string, unknown> }) {
+    lastRrwebPlayerProps = opts.props;
+  }
+  getReplayer() { return {}; }
+}
+
 vi.mock('rrweb-player', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      getReplayer: vi.fn(),
-    })),
+    default: MockRrwebPlayer,
   };
 });
 
@@ -45,6 +51,10 @@ const customFieldMapping: [string, string, ...any[]][] = [
 ];
 
 describe('UI Components', () => {
+  beforeEach(() => {
+    lastRrwebPlayerProps = null;
+  });
+
   afterEach(() => {
     cleanup();
   });
@@ -116,13 +126,12 @@ describe('UI Components', () => {
       expect(screen.getByText('No recording data')).toBeTruthy();
     });
 
-    it('有数据时应渲染容器', () => {
-      const { container } = render(
-        <ReplayPlayer data={sampleServerData} />
-      );
+    it('有数据时应渲染容器', async () => {
+      await act(async () => {
+        render(<ReplayPlayer data={sampleServerData} />);
+      });
 
-      // 应该有一个容器 div（用于 rrweb-player 挂载）
-      expect(container.querySelector('div')).toBeTruthy();
+      expect(document.querySelector('div')).toBeTruthy();
     });
 
     it('应支持自定义 className 和 style', () => {
@@ -140,7 +149,6 @@ describe('UI Components', () => {
     });
 
     it('应支持字段映射', () => {
-      // 使用映射数据不应报错
       const { container } = render(
         <ReplayPlayer
           data={customMappedData}
@@ -149,6 +157,95 @@ describe('UI Components', () => {
       );
 
       expect(container.querySelector('div')).toBeTruthy();
+    });
+
+    it('应透传 rrweb Replayer 显式字段（UNSAFE_replayCanvas, mouseTail, triggerFocus, insertStyleRules）', async () => {
+      lastRrwebPlayerProps = null;
+      await new Promise((r) => setTimeout(r, 50));
+
+      await act(async () => {
+        render(
+          <ReplayPlayer
+            data={sampleServerData}
+            config={{
+              UNSAFE_replayCanvas: true,
+              mouseTail: false,
+              triggerFocus: true,
+              insertStyleRules: ['body { color: red; }'],
+            }}
+          />
+        );
+      });
+
+      await waitFor(() => expect(lastRrwebPlayerProps).not.toBeNull());
+      expect(lastRrwebPlayerProps!.UNSAFE_replayCanvas).toBe(true);
+      expect(lastRrwebPlayerProps!.mouseTail).toBe(false);
+      expect(lastRrwebPlayerProps!.triggerFocus).toBe(true);
+      expect(lastRrwebPlayerProps!.insertStyleRules).toEqual(['body { color: red; }']);
+    });
+
+    it('replayerConfig 透传应生效，但不能覆盖 events/width/height', async () => {
+      lastRrwebPlayerProps = null;
+
+      await act(async () => {
+        render(
+          <ReplayPlayer
+            data={sampleServerData}
+            config={{
+              replayerConfig: {
+                showWarning: false,
+                events: [{ fake: true }],
+                width: 9999,
+                height: 9999,
+              },
+            }}
+          />
+        );
+      });
+
+      await waitFor(() => expect(lastRrwebPlayerProps).not.toBeNull());
+      expect(lastRrwebPlayerProps!.showWarning).toBe(false);
+      expect(lastRrwebPlayerProps!.events).toEqual(sampleServerData.events);
+      expect(lastRrwebPlayerProps!.width).toBe(1280);
+      expect(lastRrwebPlayerProps!.height).toBe(720);
+    });
+
+    it('显式字段优先级高于 replayerConfig', async () => {
+      lastRrwebPlayerProps = null;
+
+      await act(async () => {
+        render(
+          <ReplayPlayer
+            data={sampleServerData}
+            config={{
+              UNSAFE_replayCanvas: true,
+              replayerConfig: {
+                UNSAFE_replayCanvas: false,
+              },
+            }}
+          />
+        );
+      });
+
+      await waitFor(() => expect(lastRrwebPlayerProps).not.toBeNull());
+      expect(lastRrwebPlayerProps!.UNSAFE_replayCanvas).toBe(true);
+    });
+
+    it('默认 config 值应正确传递', async () => {
+      lastRrwebPlayerProps = null;
+
+      await act(async () => {
+        render(
+          <ReplayPlayer data={sampleServerData} config={{}} />
+        );
+      });
+
+      await waitFor(() => expect(lastRrwebPlayerProps).not.toBeNull());
+      expect(lastRrwebPlayerProps!.speed).toBe(1);
+      expect(lastRrwebPlayerProps!.autoPlay).toBe(false);
+      expect(lastRrwebPlayerProps!.showController).toBe(true);
+      expect(lastRrwebPlayerProps!.skipInactive).toBe(true);
+      expect(lastRrwebPlayerProps!.UNSAFE_replayCanvas).toBeUndefined();
     });
   });
 

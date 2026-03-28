@@ -504,6 +504,46 @@ export interface ReplayConfig {
   showController?: boolean;
   /** 跳过不活跃时间 @default true */
   skipInactive?: boolean;
+
+  // ==================== rrweb Replayer 配置 ====================
+
+  /**
+   * 启用 Canvas 回放（给回放 iframe 添加 allow-scripts 权限）。
+   * 录制时启用了 recordCanvas 则回放时需要开启此项。
+   * @default false
+   */
+  UNSAFE_replayCanvas?: boolean;
+  /** 暂停 CSS 动画 @default undefined */
+  pauseAnimation?: boolean;
+  /**
+   * 鼠标轨迹配置。
+   * - `true`: 显示默认轨迹
+   * - `false`: 不显示
+   * - 对象: 自定义轨迹样式
+   */
+  mouseTail?: boolean | {
+    duration?: number;
+    lineCap?: string;
+    lineWidth?: number;
+    strokeStyle?: string;
+  };
+  /** 使用虚拟 DOM 模式回放 @default false */
+  useVirtualDom?: boolean;
+  /** 实时模式（用于直播场景）@default false */
+  liveMode?: boolean;
+  /** 回放时触发 focus 事件 @default false */
+  triggerFocus?: boolean;
+  /** 注入自定义 CSS 规则到回放 iframe */
+  insertStyleRules?: string[];
+  /** 事件解压函数（与录制端 packFn 配对使用）*/
+  unpackFn?: (event: unknown) => unknown;
+
+  /**
+   * 透传给 rrweb Replayer 的其他原生配置。
+   * 上面未列出的 rrweb Replayer 选项可通过此字段传入。
+   * 注意：events、width、height 不可通过此字段覆盖。
+   */
+  replayerConfig?: Record<string, unknown>;
 }
 
 /** 回放播放器属性 */

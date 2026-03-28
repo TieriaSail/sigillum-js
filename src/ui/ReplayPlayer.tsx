@@ -100,17 +100,36 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
         const RrwebPlayer = mod.default || mod;
 
         try {
+          const {
+            speed, autoPlay, showController, skipInactive,
+            UNSAFE_replayCanvas, pauseAnimation, mouseTail,
+            useVirtualDom, liveMode, triggerFocus,
+            insertStyleRules, unpackFn,
+            replayerConfig,
+          } = config;
+
+          const replayerProps: Record<string, unknown> = {
+            ...(replayerConfig ?? {}),
+            ...(UNSAFE_replayCanvas !== undefined && { UNSAFE_replayCanvas }),
+            ...(pauseAnimation !== undefined && { pauseAnimation }),
+            ...(mouseTail !== undefined && { mouseTail }),
+            ...(useVirtualDom !== undefined && { useVirtualDom }),
+            ...(liveMode !== undefined && { liveMode }),
+            ...(triggerFocus !== undefined && { triggerFocus }),
+            ...(insertStyleRules !== undefined && { insertStyleRules }),
+            ...(unpackFn !== undefined && { unpackFn }),
+            speed: speed || 1,
+            autoPlay: autoPlay || false,
+            showController: showController !== false,
+            skipInactive: skipInactive !== false,
+            events: recordingData.events,
+            width: recordingData.viewport?.width || 1280,
+            height: recordingData.viewport?.height || 720,
+          };
+
           playerRef.current = new RrwebPlayer({
             target: containerRef.current,
-            props: {
-              events: recordingData.events,
-              width: recordingData.viewport?.width || 1280,
-              height: recordingData.viewport?.height || 720,
-              speed: config.speed || 1,
-              autoPlay: config.autoPlay || false,
-              showController: config.showController !== false,
-              skipInactive: config.skipInactive !== false,
-            },
+            props: replayerProps as any,
           });
           setPlayerLoading(false);
           setPlayerError(false);

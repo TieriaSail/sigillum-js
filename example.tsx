@@ -224,9 +224,52 @@ export function Example7_ReplayPlayer() {
 }
 
 /**
- * 示例 8: 完整回放页面
+ * 示例 8: 回放 Canvas 内容 & 高级配置
  */
-export function Example8_ReplayPage() {
+export function Example8_ReplayWithCanvas() {
+  const serverData = {
+    id: 'session-canvas',
+    content: '[]',
+    start_at: 1700000000000,
+    end_at: 1700000060000,
+    duration_ms: 60000,
+    page_url: 'https://example.com/canvas-page',
+    viewport: { width: 1280, height: 720 },
+  };
+
+  return (
+    <div style={{ height: 600 }}>
+      <h2>Canvas 回放 & 高级配置示例</h2>
+      <ReplayPlayer
+        data={serverData}
+        fieldMapping={[
+          ['sessionId', 'id'],
+          ['events', 'content', JSON.stringify, JSON.parse],
+          ['startTime', 'start_at'],
+          ['endTime', 'end_at'],
+          ['duration', 'duration_ms'],
+          ['url', 'page_url'],
+        ]}
+        config={{
+          speed: 1,
+          autoPlay: true,
+          UNSAFE_replayCanvas: true,
+          mouseTail: { duration: 500, strokeStyle: 'red' },
+          triggerFocus: true,
+          insertStyleRules: ['body { background: #f5f5f5; }'],
+          replayerConfig: {
+            showWarning: false,
+          },
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * 示例 9: 完整回放页面
+ */
+export function Example9_ReplayPage() {
   // 模拟从后端获取的数据（使用固定时间戳，仅为示例）
   const serverData = {
     id: 'session-123',
@@ -258,9 +301,9 @@ export function Example8_ReplayPage() {
 }
 
 /**
- * 示例 9: 隐私保护
+ * 示例 10: 隐私保护
  */
-export function Example9_Privacy() {
+export function Example10_Privacy() {
   useEffect(() => {
     const recorder = getRecorder({
       rrwebConfig: {
@@ -303,9 +346,9 @@ export function Example9_Privacy() {
 }
 
 /**
- * 示例 10: 生产环境配置
+ * 示例 11: 生产环境配置
  */
-export function Example10_Production() {
+export function Example11_Production() {
   useEffect(() => {
     const isProd = process.env.NODE_ENV === 'production';
 

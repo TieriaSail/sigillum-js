@@ -149,6 +149,42 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 <ReplayPage data={recordingData} showInfo={true} />
 ```
 
+<details>
+<summary><b>Replay Config</b></summary>
+
+Pass `config` to customize replay behavior. Common rrweb Replayer options are available as first-class fields; for anything else, use the `replayerConfig` passthrough.
+
+```tsx
+<ReplayPlayer
+  data={recordingData}
+  config={{
+    speed: 2,
+    autoPlay: true,
+    showController: true,
+    skipInactive: true,
+
+    // rrweb Replayer options
+    UNSAFE_replayCanvas: true,   // Required when recordCanvas was enabled
+    mouseTail: false,            // Hide mouse trail
+    pauseAnimation: true,        // Pause CSS animations during pause
+    useVirtualDom: false,
+    liveMode: false,
+    triggerFocus: true,
+    insertStyleRules: ['body { background: #fff; }'],
+    unpackFn: (e) => e,          // Paired with packFn during recording
+
+    // Passthrough for any other rrweb Replayer option not listed above
+    replayerConfig: {
+      // e.g. blockClass, loadTimeout, showWarning, etc.
+    },
+  }}
+/>
+```
+
+> **Note**: `events`, `width`, and `height` are managed internally and cannot be overridden via `config` or `replayerConfig`.
+
+</details>
+
 ## API Reference
 
 ```typescript

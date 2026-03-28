@@ -149,6 +149,42 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 <ReplayPage data={recordingData} showInfo={true} />
 ```
 
+<details>
+<summary><b>回放配置</b></summary>
+
+通过 `config` 定制回放行为。常用的 rrweb Replayer 选项已作为一级字段提供；其他选项可通过 `replayerConfig` 透传。
+
+```tsx
+<ReplayPlayer
+  data={recordingData}
+  config={{
+    speed: 2,
+    autoPlay: true,
+    showController: true,
+    skipInactive: true,
+
+    // rrweb Replayer 选项
+    UNSAFE_replayCanvas: true,   // 录制时启用了 recordCanvas 则需要开启
+    mouseTail: false,            // 隐藏鼠标轨迹
+    pauseAnimation: true,        // 暂停时冻结 CSS 动画
+    useVirtualDom: false,
+    liveMode: false,
+    triggerFocus: true,
+    insertStyleRules: ['body { background: #fff; }'],
+    unpackFn: (e) => e,          // 与录制端的 packFn 配对使用
+
+    // 透传其他未列出的 rrweb Replayer 原生选项
+    replayerConfig: {
+      // 例如 blockClass、loadTimeout、showWarning 等
+    },
+  }}
+/>
+```
+
+> **注意**：`events`、`width`、`height` 由组件内部管理，不可通过 `config` 或 `replayerConfig` 覆盖。
+
+</details>
+
 ## API 参考
 
 ```typescript
