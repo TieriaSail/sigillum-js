@@ -148,9 +148,10 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
           });
           playerRef.current = player;
 
-          player.$on?.('play', () => onPlayRef.current?.());
-          player.$on?.('pause', () => onPauseRef.current?.());
-          player.$on?.('finish', () => onFinishRef.current?.());
+          const p = player as any;
+          p.$on?.('play', () => onPlayRef.current?.());
+          p.$on?.('pause', () => onPauseRef.current?.());
+          p.$on?.('finish', () => onFinishRef.current?.());
 
           setPlayerLoading(false);
           setPlayerError(false);

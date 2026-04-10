@@ -17,7 +17,7 @@ import type {
 import { EventRecorder } from './core/EventRecorder';
 import { WechatAdapter } from './platform/miniapp/wechat';
 import type { MiniAppEventObject } from './platform/miniapp/types';
-import type { MiniAppEventInterceptor, Unsubscribe } from './platform/types';
+import type { Unsubscribe } from './platform/types';
 
 export interface MiniAppRecorderInstance {
   start(): void;
