@@ -1264,13 +1264,20 @@ describe('SessionRecorder', () => {
       await recorder.stop();
       expect(recorder.getStatus()).toBe('stopped');
 
-      const data = recorder.exportRecording();
-      expect(data).not.toBeNull();
-      expect(data!.sessionId).toBeTruthy();
-      expect(data!.events.length).toBeGreaterThanOrEqual(0);
-      expect(data!.startTime).toBeGreaterThan(0);
-      expect(data!.endTime).toBeGreaterThan(0);
-      expect(data!.duration).toBeGreaterThanOrEqual(0);
+      const envelope = recorder.exportRecording();
+      expect(envelope).not.toBeNull();
+      expect(envelope!.sigillum).toBe(true);
+      expect(envelope!.schemaVersion).toBe(1);
+      expect(envelope!.source).toBe('web');
+      expect(envelope!.sdkVersion).toBeTruthy();
+      expect(envelope!.exportedAt).toBeGreaterThan(0);
+
+      const data = envelope!.recording;
+      expect(data.sessionId).toBeTruthy();
+      expect(data.events.length).toBeGreaterThanOrEqual(0);
+      expect(data.startTime).toBeGreaterThan(0);
+      expect(data.endTime).toBeGreaterThan(0);
+      expect(data.duration).toBeGreaterThanOrEqual(0);
     });
 
     it('idle 状态下 exportRecording 应返回 null', () => {

@@ -8,6 +8,7 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import type { ReplayPlayerProps, FieldMapping, RawRecordingData } from '../types';
 import { FieldMapper } from '../FieldMapper';
 import { isBrowser } from '../compatibility';
+import { unwrapRecording } from '../core/types';
 
 /** @internal */
 interface PlayerTexts {
@@ -63,19 +64,33 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
   style,
   className,
   texts: userTexts,
+  onPlay,
+  onPause,
+  onFinish,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [playerLoading, setPlayerLoading] = useState(true);
   const [playerError, setPlayerError] = useState(false);
-  const texts = { ...DEFAULT_TEXTS, ...userTexts };
+
+  const onPlayRef = useRef(onPlay);
+  const onPauseRef = useRef(onPause);
+  const onFinishRef = useRef(onFinish);
+  useEffect(() => { onPlayRef.current = onPlay; });
+  useEffect(() => { onPauseRef.current = onPause; });
+  useEffect(() => { onFinishRef.current = onFinish; });
+  const texts = useMemo(() => ({ ...DEFAULT_TEXTS, ...userTexts }), [userTexts]);
 
   const fieldMapper = useMemo(() => new FieldMapper(fieldMapping), [fieldMapping]);
+
+  const configRef = useRef(config);
+  useEffect(() => { configRef.current = config; });
 
   const recordingData = useMemo((): RawRecordingData | null => {
     if (!data) return null;
     try {
-      return fieldMapper.fromServer(data);
+      const { recording } = unwrapRecording(data);
+      return fieldMapper.fromServer(recording as Record<string, any>);
     } catch {
       return null;
     }
@@ -106,7 +121,7 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
             useVirtualDom, liveMode, triggerFocus,
             insertStyleRules, unpackFn,
             replayerConfig,
-          } = config;
+          } = configRef.current;
 
           const replayerProps: Record<string, unknown> = {
             ...(replayerConfig ?? {}),
@@ -127,10 +142,16 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
             height: recordingData.viewport?.height || 720,
           };
 
-          playerRef.current = new RrwebPlayer({
+          const player = new RrwebPlayer({
             target: containerRef.current,
             props: replayerProps as any,
           });
+          playerRef.current = player;
+
+          player.$on?.('play', () => onPlayRef.current?.());
+          player.$on?.('pause', () => onPauseRef.current?.());
+          player.$on?.('finish', () => onFinishRef.current?.());
+
           setPlayerLoading(false);
           setPlayerError(false);
         } catch {
@@ -156,7 +177,7 @@ export const ReplayPlayer: React.FC<ReplayPlayerProps & { texts?: PlayerTexts }>
         container.innerHTML = '';
       }
     };
-  }, [recordingData, config]);
+  }, [recordingData]);
 
   if (!recordingData) {
     return (
@@ -243,12 +264,13 @@ export const SessionInfo: React.FC<SessionInfoProps> = ({
   texts: userTexts,
 }) => {
   const fieldMapper = useMemo(() => new FieldMapper(fieldMapping), [fieldMapping]);
-  const texts = { ...DEFAULT_TEXTS, ...userTexts };
+  const texts = useMemo(() => ({ ...DEFAULT_TEXTS, ...userTexts }), [userTexts]);
 
   const recordingData = useMemo((): RawRecordingData | null => {
     if (!data) return null;
     try {
-      return fieldMapper.fromServer(data);
+      const { recording } = unwrapRecording(data);
+      return fieldMapper.fromServer(recording as Record<string, any>);
     } catch {
       return null;
     }

@@ -30,7 +30,9 @@ import type {
   RouteChange,
   RecordingChunk,
   UserIdentity,
+  SigillumRecording,
 } from './types';
+import { SIGILLUM_SCHEMA_VERSION, SDK_VERSION } from './types';
 import { FieldMapper } from './FieldMapper';
 import { CacheManager } from './CacheManager';
 import { checkCompatibility, isBrowser } from './compatibility';
@@ -452,6 +454,9 @@ export class SessionRecorder {
       metadata: this.chunkIndex === 0 ? (this.metadata || undefined) : undefined,
     };
 
+    const prevLastChunkEventIndex = this.lastChunkEventIndex;
+    const prevChunkIndex = this.chunkIndex;
+
     this.lastChunkEventIndex = this.events.length;
     this.chunkIndex++;
 
@@ -467,18 +472,21 @@ export class SessionRecorder {
         }
         if (!result.shouldRetry) {
           this.log(`Chunk ${chunk.chunkIndex} upload failed (no retry):`, result.error);
-          return;
+          break;
         }
       } catch (error) {
         this.log(`Chunk ${chunk.chunkIndex} upload error (attempt ${retries + 1}):`, error);
         if (retries >= maxRetries) {
           this.emitError(error);
-          return;
+          break;
         }
       }
       retries++;
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries - 1), 10000)));
     }
+
+    this.lastChunkEventIndex = prevLastChunkEventIndex;
+    this.chunkIndex = prevChunkIndex;
   }
 
   // ==================== rrweb 配置构建 ====================
@@ -1148,7 +1156,7 @@ export class SessionRecorder {
    * 仅在 stopped 状态下可用，返回完整的录制数据副本
    * 数据包含事件流、元数据、行为摘要等，可直接用于 rrweb-player 回放
    */
-  exportRecording(): RawRecordingData | null {
+  exportRecording(): SigillumRecording<RawRecordingData> | null {
     if (this.status !== 'stopped') {
       this.log('exportRecording() requires stopped state, current:', this.status);
       return null;
@@ -1159,7 +1167,7 @@ export class SessionRecorder {
       return null;
     }
 
-    return {
+    const recording: RawRecordingData = {
       sessionId: this.sessionId,
       events: [...this.events],
       startTime: this.startTime,
@@ -1175,6 +1183,15 @@ export class SessionRecorder {
       },
       metadata: this.metadata || undefined,
       summary: this.buildSummary(),
+    };
+
+    return {
+      sigillum: true,
+      schemaVersion: SIGILLUM_SCHEMA_VERSION,
+      source: 'web',
+      sdkVersion: SDK_VERSION,
+      exportedAt: Date.now(),
+      recording,
     };
   }
 

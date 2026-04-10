@@ -492,6 +492,23 @@ export interface RecordingChunk {
 /** 录制状态 */
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 
+/** SDK 版本常量（统一来源，构建时从 package.json 注入） */
+export { SDK_VERSION } from './version';
+
+// Re-export unified recording protocol from core
+export type {
+  SigillumRecording,
+  SigillumRecordingSource,
+  DetectResult,
+} from './core/types';
+export {
+  SIGILLUM_SCHEMA_VERSION,
+  isSigillumRecording,
+  unwrapRecording,
+  detectRecordingSource,
+  detectRecordingSourceWithReason,
+} from './core/types';
+
 // ==================== 回放配置 ====================
 
 /** 回放配置 */
