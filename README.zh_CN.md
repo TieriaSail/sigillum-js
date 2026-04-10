@@ -81,6 +81,8 @@ downloadAsJson(data); // 你的下载工具函数
 | **原生 JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()`, `isRecorderInitialized()` |
 | **React** 16.8+ | `sigillum-js/react` | `useSessionRecorder()`, `useAutoRecord()` |
 | **Vue** 3+ | `sigillum-js/vue` | `createSigillumPlugin()`, `useSessionRecorder()`, `useAutoRecord()` |
+| **微信小程序** <sup>beta</sup> | `sigillum-js/miniapp` | `createMiniAppRecorder()`, `getSigillum()` |
+| **Taro** 3.0+ <sup>beta</sup> | `sigillum-js/miniapp/taro` | `createTaroRecorder()`, `getTaroSigillum()` |
 
 <details>
 <summary><b>React 示例</b></summary>
@@ -282,6 +284,27 @@ const recorder = getRecorder({
 | **Vue** | 3.0+ | `sigillum-js/vue` |
 | **Next.js** | 12+ | 通过 React 集成 |
 | **Nuxt** | 3+ | 通过 Vue 集成 |
+
+### 小程序支持 <sup>v2.0-beta</sup>
+
+> **Beta 测试中** — 通过 `npm install sigillum-js@beta` 安装。当前仅支持微信原生小程序和 Taro，API 在 beta 版本间可能会调整。
+
+| 平台 | 版本要求 | 导入路径 | 状态 |
+|------|----------|----------|------|
+| **微信小程序** | 基础库 >= 1.4.0（推荐 >= 2.1.0） | `sigillum-js/miniapp` | Beta |
+| **Taro** | 3.0.0+ | `sigillum-js/miniapp/taro` | Beta |
+| 支付宝 / 抖音 / 百度 / QQ 小程序 | 规划中 | — | — |
+
+v2.0 为小程序环境（rrweb 无法工作）提供语义化用户行为追踪：
+
+- **三档监控预设** — `lite`（仅点击+页面）、`standard`（+ 输入、滚动、滑动）、`full`（+ 触摸流、滚动深度）
+- **可配置节流** — 按事件类型设置节流间隔，通过 `monitoring.throttle` 覆盖
+- **内置隐私保护** — `maskInputs` 默认开启，输入值不会以明文离开设备
+- **语义化行为链回放** — `buildActionChain()` + `ActionChainPlayer` 提供人类可读的会话回顾
+- **Taro 自动采集** — 零手动埋点，monkey-patch `dispatchEvent`
+- **统一录制协议** — `SigillumRecording` 信封格式，自动识别 Web / 小程序数据来源
+
+> 详见[小程序集成指南](./docs/miniapp-guide.zh_CN.md)。
 
 ## 推荐搭配
 

@@ -68,6 +68,20 @@ export type {
 
   // UI 组件属性
   ReplayPlayerProps,
+
+  // 统一录制协议
+  SigillumRecording,
+  SigillumRecordingSource,
+  DetectResult,
+} from './types';
+
+export {
+  SIGILLUM_SCHEMA_VERSION,
+  isSigillumRecording,
+  unwrapRecording,
+  detectRecordingSource,
+  detectRecordingSourceWithReason,
+  SDK_VERSION,
 } from './types';
 
 // ==================== 工具 ====================

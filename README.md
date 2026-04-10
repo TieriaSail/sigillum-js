@@ -81,6 +81,8 @@ downloadAsJson(data); // your download helper
 | **Vanilla JS** | `sigillum-js` | `getRecorder()`, `resetRecorder()`, `isRecorderInitialized()` |
 | **React** 16.8+ | `sigillum-js/react` | `useSessionRecorder()`, `useAutoRecord()` |
 | **Vue** 3+ | `sigillum-js/vue` | `createSigillumPlugin()`, `useSessionRecorder()`, `useAutoRecord()` |
+| **WeChat Mini Program** <sup>beta</sup> | `sigillum-js/miniapp` | `createMiniAppRecorder()`, `getSigillum()` |
+| **Taro** 3.0+ <sup>beta</sup> | `sigillum-js/miniapp/taro` | `createTaroRecorder()`, `getTaroSigillum()` |
 
 <details>
 <summary><b>React Example</b></summary>
@@ -282,6 +284,27 @@ const recorder = getRecorder({
 | **Vue** | 3.0+ | `sigillum-js/vue` |
 | **Next.js** | 12+ | Via React integration |
 | **Nuxt** | 3+ | Via Vue integration |
+
+### Mini Program Support <sup>v2.0-beta</sup>
+
+> **Beta Testing** — Install via `npm install sigillum-js@beta`. Only WeChat native and Taro are supported at this time. APIs may change between beta releases.
+
+| Platform | Version | Import Path | Status |
+|----------|---------|-------------|--------|
+| **WeChat Mini Program** | Base library >= 1.4.0 (recommended >= 2.1.0) | `sigillum-js/miniapp` | Beta |
+| **Taro** | 3.0.0+ | `sigillum-js/miniapp/taro` | Beta |
+| Alipay / TikTok / Baidu / QQ | Planned | — | — |
+
+v2.0 brings semantic user behavior tracking to mini programs (where rrweb cannot work):
+
+- **Three monitoring presets** — `lite` (tap + page only), `standard` (+ input, scroll, swipe), `full` (+ touch stream, scroll depth)
+- **Configurable throttle** — per-event-type throttle intervals, overridable via `monitoring.throttle`
+- **Privacy built-in** — `maskInputs` enabled by default, input values never leave the device in plaintext
+- **Semantic action chain replay** — `buildActionChain()` + `ActionChainPlayer` for human-readable session review
+- **Taro auto-capture** — zero manual tracking code, monkey-patches `dispatchEvent`
+- **Unified recording protocol** — `SigillumRecording` envelope format with auto-detection for both Web and MiniApp data
+
+> See the [Mini Program Integration Guide](./docs/miniapp-guide.md) for full documentation.
 
 ## Also Check Out
 

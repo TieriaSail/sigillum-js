@@ -1,7 +1,7 @@
 {
   "name": "sigillum-js",
-  "version": "1.3.0",
-  "description": "A session recording library for user behavior replay and bug reproduction",
+  "version": "2.0.0-beta.1",
+  "description": "Session recording for web and mini programs. Record user behavior, replay it, debug faster.",
   "keywords": [
     "session-replay",
     "session-recording",
@@ -18,6 +18,11 @@
     "react",
     "vue",
     "typescript",
+    "miniapp",
+    "mini-program",
+    "wechat",
+    "taro",
+    "action-chain",
     "lightweight",
     "privacy",
     "logrocket-alternative",
@@ -50,6 +55,21 @@
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.js",
       "require": "./dist/ui/index.cjs"
+    },
+    "./miniapp": {
+      "types": "./dist/miniapp.d.ts",
+      "import": "./dist/miniapp.js",
+      "require": "./dist/miniapp.cjs"
+    },
+    "./miniapp/taro": {
+      "types": "./dist/miniapp-taro.d.ts",
+      "import": "./dist/miniapp-taro.js",
+      "require": "./dist/miniapp-taro.cjs"
+    },
+    "./replay": {
+      "types": "./dist/replay/index.d.ts",
+      "import": "./dist/replay/index.js",
+      "require": "./dist/replay/index.cjs"
     }
   },
   "files": [
@@ -66,7 +86,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint . --ext .ts,.tsx",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
@@ -76,7 +95,9 @@
   "peerDependencies": {
     "react": ">=16.8.0",
     "react-dom": ">=16.8.0",
-    "vue": ">=3.0.0"
+    "vue": ">=3.0.0",
+    "@tarojs/runtime": ">=3.0.0",
+    "@tarojs/taro": ">=3.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -86,6 +107,12 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "@tarojs/runtime": {
+      "optional": true
+    },
+    "@tarojs/taro": {
       "optional": true
     }
   },
