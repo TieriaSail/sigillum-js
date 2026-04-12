@@ -282,7 +282,7 @@ export interface MiniAppRecorderOptions {
   };
   onChunkUpload?: (chunk: MiniAppRecordingChunk) => Promise<MiniAppUploadResult>;
 
-  /** 隐私：输入值是否脱敏 @default true */
+  /** 隐私：输入值是否脱敏 @default false */
   maskInputs?: boolean;
 
   /** 最大录制时长 (ms) @default 1800000 */

@@ -299,7 +299,7 @@ v2.0 为小程序环境（rrweb 无法工作）提供语义化用户行为追踪
 
 - **三档监控预设** — `lite`（仅点击+页面）、`standard`（+ 输入、滚动、滑动）、`full`（+ 触摸流、滚动深度）
 - **可配置节流** — 按事件类型设置节流间隔，通过 `monitoring.throttle` 覆盖
-- **内置隐私保护** — `maskInputs` 默认开启，输入值不会以明文离开设备
+- **隐私保护可配** — `maskInputs: true` 在输入值离开设备前进行脱敏（详见[隐私保护](./docs/miniapp-guide.zh_CN.md#隐私保护)）
 - **语义化行为链回放** — `buildActionChain()` + `ActionChainPlayer` 提供人类可读的会话回顾
 - **Taro 自动采集** — 零手动埋点，monkey-patch `dispatchEvent`
 - **统一录制协议** — `SigillumRecording` 信封格式，自动识别 Web / 小程序数据来源

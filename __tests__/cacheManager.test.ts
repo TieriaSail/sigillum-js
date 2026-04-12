@@ -107,6 +107,52 @@ describe('CacheManager', () => {
       expect((raw as any).endTime).toBeUndefined();
       expect((raw as any).duration).toBeUndefined();
     });
+
+    it('无分段进度时 lastChunkEventIndex 和 chunkIndex 默认为 0', () => {
+      const cached = makeCachedRecording('session-1', 1000);
+      const raw = cache.toRawRecordingData(cached);
+
+      expect(raw.lastChunkEventIndex).toBe(0);
+      expect(raw.chunkIndex).toBe(0);
+    });
+
+    it('应正确透传分段上传进度', () => {
+      const cached = {
+        ...makeCachedRecording('session-1', 1000),
+        lastChunkEventIndex: 42,
+        chunkIndex: 3,
+      };
+      const raw = cache.toRawRecordingData(cached);
+
+      expect(raw.lastChunkEventIndex).toBe(42);
+      expect(raw.chunkIndex).toBe(3);
+    });
+  });
+
+  describe('分段上传进度持久化', () => {
+    it('应保存并恢复分段进度字段', async () => {
+      const data = {
+        ...makeCachedRecording('chunk-session', 1000),
+        lastChunkEventIndex: 100,
+        chunkIndex: 5,
+      };
+      await cache.save(data);
+
+      const all = await cache.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].lastChunkEventIndex).toBe(100);
+      expect(all[0].chunkIndex).toBe(5);
+    });
+
+    it('旧缓存数据（无分段字段）应兼容', async () => {
+      const data = makeCachedRecording('old-session', 1000);
+      await cache.save(data);
+
+      const all = await cache.getAll();
+      const raw = cache.toRawRecordingData(all[0]);
+      expect(raw.lastChunkEventIndex).toBe(0);
+      expect(raw.chunkIndex).toBe(0);
+    });
   });
 
   describe('IndexedDB 不可用时的降级', () => {

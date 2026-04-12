@@ -27,6 +27,10 @@ interface CachedRecording {
   screenResolution: string;
   viewport: { width: number; height: number };
   updatedAt: number;
+  /** 已通过分段上传成功的事件截止索引 */
+  lastChunkEventIndex?: number;
+  /** 下一个待上传的 chunk 序号 */
+  chunkIndex?: number;
 }
 
 /**
@@ -315,7 +319,10 @@ export class CacheManager {
   /**
    * 将缓存数据转换为 RawRecordingData
    */
-  toRawRecordingData(cached: CachedRecording): Omit<RawRecordingData, 'endTime' | 'duration'> {
+  toRawRecordingData(cached: CachedRecording): Omit<RawRecordingData, 'endTime' | 'duration'> & {
+    lastChunkEventIndex: number;
+    chunkIndex: number;
+  } {
     return {
       sessionId: cached.id,
       events: cached.events,
@@ -325,6 +332,8 @@ export class CacheManager {
       userAgent: cached.userAgent,
       screenResolution: cached.screenResolution,
       viewport: cached.viewport,
+      lastChunkEventIndex: cached.lastChunkEventIndex ?? 0,
+      chunkIndex: cached.chunkIndex ?? 0,
     };
   }
 }

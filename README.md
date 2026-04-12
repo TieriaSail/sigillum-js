@@ -299,7 +299,7 @@ v2.0 brings semantic user behavior tracking to mini programs (where rrweb cannot
 
 - **Three monitoring presets** — `lite` (tap + page only), `standard` (+ input, scroll, swipe), `full` (+ touch stream, scroll depth)
 - **Configurable throttle** — per-event-type throttle intervals, overridable via `monitoring.throttle`
-- **Privacy built-in** — `maskInputs` enabled by default, input values never leave the device in plaintext
+- **Privacy configurable** — `maskInputs: true` masks all input values before they leave the device (see [Privacy Protection](./docs/miniapp-guide.md#privacy-protection))
 - **Semantic action chain replay** — `buildActionChain()` + `ActionChainPlayer` for human-readable session review
 - **Taro auto-capture** — zero manual tracking code, monkey-patches `dispatchEvent`
 - **Unified recording protocol** — `SigillumRecording` envelope format with auto-detection for both Web and MiniApp data

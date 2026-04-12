@@ -159,6 +159,16 @@ describe('EventRecorder', () => {
       expect(inputEvent.data.value).toBe('plain');
       r.destroy();
     });
+
+    it('maskInputs 未指定时默认不脱敏', () => {
+      const r = new EventRecorder(options);
+      r.start('wechat');
+      r.captureEvent({ type: 'input', timestamp: Date.now(), data: { value: 'visible', target: {}, page: 'p' } });
+      const exported = (r as any).buffer.getEvents();
+      const inputEvent = exported.find((e: any) => e.type === 'input');
+      expect(inputEvent.data.value).toBe('visible');
+      r.destroy();
+    });
   });
 
   describe('行为统计', () => {
