@@ -165,6 +165,7 @@ export class SessionRecorder {
   private chunkIndex: number = 0;
   private lastChunkEventIndex: number = 0;
   private lastCachedEventCount: number = 0;
+  private lastCachedChunkIndex: number = 0;
 
   constructor(options: SessionRecorderOptions) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -828,11 +829,13 @@ export class SessionRecorder {
       return;
     }
 
-    // 无新增事件则跳过，避免每个周期都做一次 IndexedDB 写入
-    if (this.events.length === this.lastCachedEventCount) {
+    // 无新增事件且 chunk 进度未变则跳过，避免无意义的 IndexedDB 写入
+    if (this.events.length === this.lastCachedEventCount
+        && this.chunkIndex === this.lastCachedChunkIndex) {
       return;
     }
     this.lastCachedEventCount = this.events.length;
+    this.lastCachedChunkIndex = this.chunkIndex;
 
     this.cacheManager.save({
       id: this.sessionId,
@@ -847,6 +850,8 @@ export class SessionRecorder {
         height: window.innerHeight,
       },
       updatedAt: Date.now(),
+      lastChunkEventIndex: this.lastChunkEventIndex,
+      chunkIndex: this.chunkIndex,
     }).catch(() => {});
 
     this.log('Saved to cache');
@@ -871,8 +876,22 @@ export class SessionRecorder {
 
     for (const item of cached) {
       try {
+        const converted = this.cacheManager.toRawRecordingData(item);
+        const { lastChunkEventIndex, chunkIndex, ...rawFields } = converted;
+
+        const pendingEvents = lastChunkEventIndex > 0
+          ? converted.events.slice(lastChunkEventIndex)
+          : converted.events;
+
+        if (pendingEvents.length === 0) {
+          await this.cacheManager.delete(item.id);
+          this.log('Recovered cached recording (all chunks already uploaded):', item.id);
+          continue;
+        }
+
         const rawData: RawRecordingData = {
-          ...this.cacheManager.toRawRecordingData(item),
+          ...rawFields,
+          events: pendingEvents,
           endTime: item.updatedAt,
           duration: item.updatedAt - item.startTime,
         };
@@ -885,7 +904,8 @@ export class SessionRecorder {
         const result = await this.options.onUpload(serverData);
         if (result.success) {
           await this.cacheManager.delete(item.id);
-          this.log('Recovered and uploaded cached recording:', item.id);
+          this.log('Recovered and uploaded cached recording:', item.id,
+            lastChunkEventIndex > 0 ? `(skipped ${lastChunkEventIndex} already-uploaded events)` : '');
         }
       } catch (error) {
         this.log('Failed to recover cached recording:', error);
@@ -980,6 +1000,7 @@ export class SessionRecorder {
     this.chunkIndex = 0;
     this.lastChunkEventIndex = 0;
     this.lastCachedEventCount = 0;
+    this.lastCachedChunkIndex = 0;
   }
 
   // ==================== 公开 API ====================
