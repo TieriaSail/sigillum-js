@@ -140,7 +140,7 @@ export class EventRecorder {
   captureEvent(event: TrackEvent): void {
     if (this.status !== 'recording') return;
 
-    if (this.options.maskInputs !== false && event.type === 'input' && event.data) {
+    if (this.options.maskInputs === true && event.type === 'input' && event.data) {
       const original = event.data as Record<string, unknown>;
       const masked = { ...original };
       if (typeof masked.value === 'string') {

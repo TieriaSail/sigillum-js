@@ -361,13 +361,76 @@ player.play();
 | `onChunkUpload` | `function` | — | 分段上传回调 |
 | `chunkedUpload.enabled` | `boolean` | `false` | 启用分段上传 |
 | `chunkedUpload.interval` | `number` | `60000` | 分段间隔（ms） |
-| `maskInputs` | `boolean` | `true` | 遮蔽输入值 |
+| `maskInputs` | `boolean` | `false` | 遮蔽输入值（参见[隐私保护](#隐私保护)） |
 | `maxDuration` | `number` | `1800000` | 最大录制时长（ms） |
 | `maxEvents` | `number` | `50000` | 最大事件数 |
 | `maxRetries` | `number` | `3` | 上传重试次数 |
 | `debug` | `boolean` | `false` | 调试模式 |
 
 </details>
+
+## 隐私保护
+
+Web（rrweb）和小程序 SDK 默认**均不启用输入脱敏**（`maskInputs: false` / `maskAllInputs: false`）。这意味着用户输入值（文本框、搜索框等）默认以明文录制。
+
+> **重要**：如果您的应用涉及敏感数据（密码、手机号、身份证号、支付信息、医疗记录等），**必须**在上线前启用输入脱敏。
+
+### 小程序
+
+```javascript
+createMiniAppRecorder({
+  maskInputs: true,   // 遮蔽所有输入值
+  // ...
+});
+```
+
+启用后的脱敏规则：
+- 字符串值 → 等长的 `*`（如 `"secret123"` → `"*********"`）
+- 非字符串、非空值（数字、布尔值） → 替换为 `"***"`
+- `null` / `undefined` → 保持原样
+
+脱敏在 `captureEvent` 内同步完成 — 原始值永远不会进入事件缓冲区或离开设备。
+
+### Web（rrweb）
+
+```javascript
+getRecorder({
+  rrwebConfig: {
+    privacy: {
+      maskAllInputs: true,
+
+      maskInputOptions: {
+        password: true,    // 始终建议开启
+        email: true,
+        tel: true,
+        text: true,
+      },
+
+      blockClass: 'sensitive-area',
+      blockSelector: '[data-private]',
+      maskTextClass: 'mask-text',
+      maskTextSelector: '.user-info',
+
+      maskInputFn: (text, element) => {
+        if (element.getAttribute('type') === 'tel') return text.replace(/\d/g, '*');
+        return '*'.repeat(text.length);
+      },
+    },
+  },
+});
+```
+
+### 推荐的生产环境配置
+
+| 场景 | 小程序 | Web |
+|---|---|---|
+| 通用应用 | `maskInputs: true` | `maskAllInputs: true` |
+| 登录/支付页面 | `maskInputs: true` | `maskAllInputs: true` + `blockSelector: '[data-private]'` |
+| 内部/调试 | `maskInputs: false` | `maskAllInputs: false` |
+
+> **合规提示**：启用脱敏有助于满足 GDPR、CCPA 和中国《个人信息保护法》对会话回放的合规要求。具体请咨询您的法务/合规团队。
+
+---
 
 ## 统一录制协议
 
@@ -445,7 +508,7 @@ import { ReplayRouter } from 'sigillum-js/ui';
 `lite` 仅采集点击和页面跳转（最小开销）。`standard` 增加输入、滚动、滑动、网络请求。`full` 增加原始触摸流、拖拽和滚动深度追踪。
 
 **Q: `maskInputs` 是怎么脱敏的？**
-默认开启（`maskInputs: true`）。脱敏规则：
+默认关闭（`maskInputs: false`）。开启后（`maskInputs: true`），脱敏规则：
 - 字符串值 → 等长的 `*`（如 `"secret123"` → `"*********"`）
 - 非字符串非 null 值（数字、布尔等）→ `"***"`
 - `null` / `undefined` → 保持原值

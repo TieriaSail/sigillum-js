@@ -361,13 +361,76 @@ Same as above, plus:
 | `onChunkUpload` | `function` | — | Chunked upload callback |
 | `chunkedUpload.enabled` | `boolean` | `false` | Enable chunked upload |
 | `chunkedUpload.interval` | `number` | `60000` | Chunk interval (ms) |
-| `maskInputs` | `boolean` | `true` | Mask input values |
+| `maskInputs` | `boolean` | `false` | Mask input values (see [Privacy Protection](#privacy-protection)) |
 | `maxDuration` | `number` | `1800000` | Max recording duration (ms) |
 | `maxEvents` | `number` | `50000` | Max events |
 | `maxRetries` | `number` | `3` | Upload retry count |
 | `debug` | `boolean` | `false` | Debug mode |
 
 </details>
+
+## Privacy Protection
+
+Both Web (rrweb) and MiniApp SDKs default to **no input masking** (`maskInputs: false` / `maskAllInputs: false`). This means user input values (text fields, search boxes, etc.) are recorded in plaintext by default.
+
+> **Important**: If your application handles sensitive data (passwords, phone numbers, ID numbers, payment info, medical records, etc.), you **must** enable input masking before going to production.
+
+### MiniApp
+
+```javascript
+createMiniAppRecorder({
+  maskInputs: true,   // Mask all input values
+  // ...
+});
+```
+
+When enabled, masking rules are:
+- String values → replaced with equal-length `*` (e.g. `"secret123"` → `"*********"`)
+- Non-string, non-null values (numbers, booleans) → replaced with `"***"`
+- `null` / `undefined` → kept as-is
+
+Masking is applied synchronously inside `captureEvent` — raw values never enter the event buffer or leave the device.
+
+### Web (rrweb)
+
+```javascript
+getRecorder({
+  rrwebConfig: {
+    privacy: {
+      maskAllInputs: true,
+
+      maskInputOptions: {
+        password: true,    // Always recommended
+        email: true,
+        tel: true,
+        text: true,
+      },
+
+      blockClass: 'sensitive-area',
+      blockSelector: '[data-private]',
+      maskTextClass: 'mask-text',
+      maskTextSelector: '.user-info',
+
+      maskInputFn: (text, element) => {
+        if (element.getAttribute('type') === 'tel') return text.replace(/\d/g, '*');
+        return '*'.repeat(text.length);
+      },
+    },
+  },
+});
+```
+
+### Recommended Production Configuration
+
+| Scenario | MiniApp | Web |
+|---|---|---|
+| General app | `maskInputs: true` | `maskAllInputs: true` |
+| Login / payment pages | `maskInputs: true` | `maskAllInputs: true` + `blockSelector: '[data-private]'` |
+| Internal / debug | `maskInputs: false` | `maskAllInputs: false` |
+
+> **Compliance note**: Enabling masking helps meet GDPR, CCPA, and China's Personal Information Protection Law (PIPL) requirements for session replay. Always consult your legal/compliance team for specific guidance.
+
+---
 
 ## Unified Recording Protocol
 
@@ -445,7 +508,7 @@ The `dispatchEvent` patch adds one function call + one conditional check per eve
 `lite` captures only taps and page navigation (minimal overhead). `standard` adds input, scroll, swipe, and network events. `full` adds raw touch streams, drag events, and scroll depth tracking.
 
 **Q: How does `maskInputs` work?**
-Enabled by default (`maskInputs: true`). Masking rules:
+Disabled by default (`maskInputs: false`). When enabled (`maskInputs: true`), masking rules:
 - String values → replaced with equal-length `*` (e.g. `"secret123"` → `"*********"`)
 - Non-string, non-null values (numbers, booleans, etc.) → replaced with `"***"`
 - `null` / `undefined` → kept as-is
