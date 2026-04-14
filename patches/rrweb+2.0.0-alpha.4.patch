@@ -1,0 +1,52 @@
+diff --git a/node_modules/rrweb/es/rrweb/packages/rrweb/src/utils.js b/node_modules/rrweb/es/rrweb/packages/rrweb/src/utils.js
+index d272eaa..ba728fb 100755
+--- a/node_modules/rrweb/es/rrweb/packages/rrweb/src/utils.js
++++ b/node_modules/rrweb/es/rrweb/packages/rrweb/src/utils.js
+@@ -141,7 +141,7 @@ function isBlocked(node, blockClass, blockSelector, checkAncestors) {
+             return true;
+     }
+     if (blockSelector) {
+-        if (node.matches(blockSelector))
++        if (el.matches(blockSelector))
+             return true;
+         if (checkAncestors && el.closest(blockSelector) !== null)
+             return true;
+diff --git a/node_modules/rrweb/lib/record/rrweb-record.js b/node_modules/rrweb/lib/record/rrweb-record.js
+index 89cfabd..9388657 100755
+--- a/node_modules/rrweb/lib/record/rrweb-record.js
++++ b/node_modules/rrweb/lib/record/rrweb-record.js
+@@ -1163,7 +1163,7 @@ function isBlocked(node, blockClass, blockSelector, checkAncestors) {
+             return true;
+     }
+     if (blockSelector) {
+-        if (node.matches(blockSelector))
++        if (el.matches(blockSelector))
+             return true;
+         if (checkAncestors && el.closest(blockSelector) !== null)
+             return true;
+diff --git a/node_modules/rrweb/lib/rrweb-all.js b/node_modules/rrweb/lib/rrweb-all.js
+index 6acc760..c507b32 100755
+--- a/node_modules/rrweb/lib/rrweb-all.js
++++ b/node_modules/rrweb/lib/rrweb-all.js
+@@ -1960,7 +1960,7 @@ function isBlocked(node, blockClass, blockSelector, checkAncestors) {
+             return true;
+     }
+     if (blockSelector) {
+-        if (node.matches(blockSelector))
++        if (el.matches(blockSelector))
+             return true;
+         if (checkAncestors && el.closest(blockSelector) !== null)
+             return true;
+diff --git a/node_modules/rrweb/lib/rrweb.js b/node_modules/rrweb/lib/rrweb.js
+index 9f5cf1b..49bf6a1 100755
+--- a/node_modules/rrweb/lib/rrweb.js
++++ b/node_modules/rrweb/lib/rrweb.js
+@@ -1960,7 +1960,7 @@ function isBlocked(node, blockClass, blockSelector, checkAncestors) {
+             return true;
+     }
+     if (blockSelector) {
+-        if (node.matches(blockSelector))
++        if (el.matches(blockSelector))
+             return true;
+         if (checkAncestors && el.closest(blockSelector) !== null)
+             return true;
