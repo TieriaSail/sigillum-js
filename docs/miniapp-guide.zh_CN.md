@@ -407,7 +407,9 @@ getRecorder({
       },
 
       blockClass: 'sensitive-area',
-      blockSelector: '[data-private]',
+      // ⚠️ blockSelector 存在已知 bug，请使用 blockClass 替代。
+      // 详见：https://github.com/rrweb-io/rrweb/issues/1486
+      // blockSelector: '[data-private]',
       maskTextClass: 'mask-text',
       maskTextSelector: '.user-info',
 
@@ -425,7 +427,7 @@ getRecorder({
 | 场景 | 小程序 | Web |
 |---|---|---|
 | 通用应用 | `maskInputs: true` | `maskAllInputs: true` |
-| 登录/支付页面 | `maskInputs: true` | `maskAllInputs: true` + `blockSelector: '[data-private]'` |
+| 登录/支付页面 | `maskInputs: true` | `maskAllInputs: true` + `blockClass: 'rr-block'` |
 | 内部/调试 | `maskInputs: false` | `maskAllInputs: false` |
 
 > **合规提示**：启用脱敏有助于满足 GDPR、CCPA 和中国《个人信息保护法》对会话回放的合规要求。具体请咨询您的法务/合规团队。

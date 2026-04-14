@@ -407,7 +407,9 @@ getRecorder({
       },
 
       blockClass: 'sensitive-area',
-      blockSelector: '[data-private]',
+      // ⚠️ blockSelector has a known bug — use blockClass instead.
+      // See: https://github.com/rrweb-io/rrweb/issues/1486
+      // blockSelector: '[data-private]',
       maskTextClass: 'mask-text',
       maskTextSelector: '.user-info',
 
@@ -425,7 +427,7 @@ getRecorder({
 | Scenario | MiniApp | Web |
 |---|---|---|
 | General app | `maskInputs: true` | `maskAllInputs: true` |
-| Login / payment pages | `maskInputs: true` | `maskAllInputs: true` + `blockSelector: '[data-private]'` |
+| Login / payment pages | `maskInputs: true` | `maskAllInputs: true` + `blockClass: 'rr-block'` |
 | Internal / debug | `maskInputs: false` | `maskAllInputs: false` |
 
 > **Compliance note**: Enabling masking helps meet GDPR, CCPA, and China's Personal Information Protection Law (PIPL) requirements for session replay. Always consult your legal/compliance team for specific guidance.

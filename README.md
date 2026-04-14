@@ -253,7 +253,11 @@ const recorder = getRecorder({
   // Privacy (mask inputs, block elements, etc.)
   rrwebConfig: {
     privacy: {
-      blockSelector: '.credit-card-form, [data-private]',
+      // ⚠️ Use blockClass instead of blockSelector.
+      // blockSelector has a known bug in rrweb 2.0.0-alpha.4 that silently
+      // breaks recording when Text nodes change. See:
+      // https://github.com/rrweb-io/rrweb/issues/1486
+      blockClass: 'rr-block',
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',

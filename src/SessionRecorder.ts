@@ -499,6 +499,17 @@ export class SessionRecorder {
     const rrwebConfig = this.options.rrwebConfig || {};
     const privacy = rrwebConfig.privacy || {};
 
+    if (privacy.blockSelector) {
+      console.warn(
+        '[sigillum-js] privacy.blockSelector has a known bug in rrweb 2.0.0-alpha.4: ' +
+        'when a Text node triggers a characterData mutation, rrweb calls node.matches(selector) ' +
+        'on it, but Text nodes have no matches() method, causing a silent crash that breaks all ' +
+        'subsequent recording. This has been patched in sigillum-js, but if you installed rrweb ' +
+        'separately, consider using blockClass instead. ' +
+        'See: https://github.com/rrweb-io/rrweb/issues/1486'
+      );
+    }
+
     const options: Record<string, any> = {
       emit: (event: EventWithTime) => {
         try {

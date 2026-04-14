@@ -188,7 +188,17 @@ export interface PrivacyConfig {
 
   /** 带此 class 的元素完全不录制（DOM 变化也不记录）@default undefined */
   blockClass?: string | RegExp;
-  /** CSS 选择器级别的屏蔽（更灵活）@default undefined */
+  /**
+   * CSS 选择器级别的屏蔽（更灵活）
+   *
+   * @deprecated rrweb 2.0.0-alpha.4 存在 bug：当 DOM 中出现 characterData 类型的
+   * mutation（如文本节点内容变化）时，isBlocked() 会在 Text 节点上调用 node.matches()，
+   * 导致 TypeError 崩溃并静默中断后续所有录制。sigillum-js 已通过 patch-package 修复此问题，
+   * 但如果你单独安装了 rrweb，blockSelector 仍会触发此 bug。
+   * 推荐使用 blockClass 替代。
+   * @see https://github.com/rrweb-io/rrweb/issues/1486
+   * @default undefined
+   */
   blockSelector?: string;
 
   // ========== 文本遮盖 ==========
