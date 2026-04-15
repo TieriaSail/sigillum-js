@@ -251,7 +251,11 @@ const recorder = getRecorder({
   // 隐私（遮盖输入、屏蔽元素等）
   rrwebConfig: {
     privacy: {
-      blockSelector: '.credit-card-form, [data-private]',
+      // ⚠️ 请使用 blockClass 代替 blockSelector。
+      // blockSelector 在 rrweb 2.0.0-alpha.4 中存在 bug，当 Text 节点内容
+      // 变化时会导致录制静默中断。详见：
+      // https://github.com/rrweb-io/rrweb/issues/1486
+      blockClass: 'rr-block',
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',

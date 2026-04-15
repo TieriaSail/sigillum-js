@@ -501,6 +501,53 @@ describe('SessionRecorder', () => {
       expect(recordCall.ignoreClass).toBe('no-record');
     });
 
+    it('使用 blockSelector 时应输出控制台警告', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: {
+          privacy: {
+            blockSelector: '.secret',
+          },
+        },
+      });
+
+      recorder.start();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('blockSelector has a known bug')
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('rrweb-io/rrweb/issues/1486')
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('不使用 blockSelector 时不应输出警告', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: {
+          privacy: {
+            blockClass: 'private-block',
+            maskAllInputs: true,
+          },
+        },
+      });
+
+      recorder.start();
+
+      const blockSelectorWarnings = warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('blockSelector')
+      );
+      expect(blockSelectorWarnings).toHaveLength(0);
+
+      warnSpy.mockRestore();
+    });
+
     it('slimDOMOptions 应透传给 rrweb', () => {
       recorder = new SessionRecorder({
         ...defaultOptions,
