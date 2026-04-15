@@ -372,16 +372,33 @@ export interface RrwebConfig {
 export interface SessionRecorderOptions {
   // ========== 上传 ==========
   /**
-   * 上传函数
-   * 不提供时为纯本地模式，录制数据仅保留在内存中，需通过 exportRecording() 手动导出
+   * 统一上传回调
+   *
+   * 无论是定时分段上传、录制结束上传、还是崩溃恢复上传，都走这一个回调。
+   * 每次调用传入一个 RecordingChunk，包含 chunkIndex、isFinal、events 等字段。
+   * 不提供时为纯本地模式，录制数据仅保留在内存中，需通过 exportRecording() 手动导出。
+   *
+   * @example
+   * ```ts
+   * {
+   *   onUpload: async (chunk) => {
+   *     await fetch('/api/recording', {
+   *       method: 'POST',
+   *       body: JSON.stringify(chunk),
+   *     });
+   *     return { success: true };
+   *   },
+   *   chunkedUpload: { enabled: true, interval: 60000 },
+   * }
+   * ```
    */
-  onUpload?: (data: Record<string, any>) => Promise<UploadResult>;
+  onUpload?: (chunk: RecordingChunk) => Promise<UploadResult>;
 
   // ========== 字段映射 ==========
   /** 字段映射配置 */
   fieldMapping?: FieldMapping[];
-  /** 上传前额外处理 */
-  beforeUpload?: (data: Record<string, any>) => Record<string, any>;
+  /** 上传前额外处理（接收 RecordingChunk，返回处理后的对象） */
+  beforeUpload?: (chunk: RecordingChunk) => RecordingChunk;
 
   // ========== 启用条件 ==========
   /** 是否启用（支持函数，可以做条件判断）@default true */
@@ -423,23 +440,6 @@ export interface SessionRecorderOptions {
    * 分段上传配置
    * 启用后，录制过程中会按间隔自动分段上传，避免一次性上传大量数据
    * 每个分段包含该时间段内的事件和当前摘要
-   *
-   * @example
-   * ```ts
-   * {
-   *   chunkedUpload: {
-   *     enabled: true,
-   *     interval: 60000, // 每 60 秒上传一个分段
-   *   },
-   *   onChunkUpload: async (chunk) => {
-   *     await fetch('/api/recording-chunks', {
-   *       method: 'POST',
-   *       body: JSON.stringify(chunk),
-   *     });
-   *     return { success: true };
-   *   },
-   * }
-   * ```
    */
   chunkedUpload?: {
     /** 是否启用分段上传 @default false */
@@ -449,8 +449,8 @@ export interface SessionRecorderOptions {
   };
 
   /**
-   * 分段上传回调
-   * 启用 chunkedUpload 时必须提供
+   * @deprecated 请使用统一的 onUpload 代替。onChunkUpload 将在下一个大版本中移除。
+   * 如果同时提供了 onUpload 和 onChunkUpload，onUpload 优先。
    */
   onChunkUpload?: (chunk: RecordingChunk) => Promise<UploadResult>;
 

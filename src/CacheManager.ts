@@ -2,23 +2,30 @@
  * IndexedDB 缓存管理器
  * 用于防止页面崩溃/刷新时丢失录制数据
  *
+ * 存储模式（v1.4.0+）：
+ * 每次 saveToCache 写入一个新的 chunk 条目（增量），而非覆盖一个不断膨胀的大条目。
+ * key 格式：{sessionId}:{cacheChunkIndex}
+ *
  * 清理策略（按优先级执行）：
  * 1. 过期清理 — 超过 maxAge 的缓存条目自动删除
  * 2. 条数限制 — 超过 maxItems 时淘汰最旧条目
  * 3. 存储空间预警 — 当 IndexedDB 使用量超过配额 80% 时淘汰最旧条目
  */
 
-import type { RawRecordingData, EventWithTime, TagInfo } from './types';
+import type { EventWithTime, TagInfo, SessionMetadata } from './types';
 
 const DB_NAME = 'session-replay-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'recordings';
 const DEFAULT_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 const STORAGE_USAGE_THRESHOLD = 0.8; // 80%
 
-/** 缓存的录制数据 */
-interface CachedRecording {
-  id: string; // sessionId
+/** 增量缓存 chunk 条目 */
+export interface CachedChunk {
+  /** 复合 key：{sessionId}:{cacheChunkIndex} */
+  id: string;
+  sessionId: string;
+  cacheChunkIndex: number;
   events: EventWithTime[];
   tags: TagInfo[];
   startTime: number;
@@ -30,6 +37,23 @@ interface CachedRecording {
   /** 已通过分段上传成功的事件截止索引 */
   lastChunkEventIndex?: number;
   /** 下一个待上传的 chunk 序号 */
+  chunkIndex?: number;
+  /** 会话元数据 */
+  metadata?: SessionMetadata;
+}
+
+/** 旧版全量缓存格式（v1.3.x 兼容） */
+interface LegacyCachedRecording {
+  id: string;
+  events: EventWithTime[];
+  tags: TagInfo[];
+  startTime: number;
+  url: string;
+  userAgent: string;
+  screenResolution: string;
+  viewport: { width: number; height: number };
+  updatedAt: number;
+  lastChunkEventIndex?: number;
   chunkIndex?: number;
 }
 
@@ -47,15 +71,13 @@ export class CacheManager {
     this.maxAge = maxAge;
     this.dbReady = this.initDB();
 
-    // DB 就绪后执行一次清理
     this.dbReady.then((ready) => {
-      if (ready) this.cleanup();
+      if (ready) {
+        this.migrateLegacyData().then(() => this.cleanup());
+      }
     });
   }
 
-  /**
-   * 初始化 IndexedDB
-   */
   private initDB(): Promise<boolean> {
     return new Promise((resolve) => {
       if (typeof indexedDB === 'undefined') {
@@ -78,13 +100,60 @@ export class CacheManager {
         request.onupgradeneeded = (event) => {
           const db = (event.target as IDBOpenDBRequest).result;
           if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            store.createIndex('sessionId', 'sessionId', { unique: false });
+          } else {
+            const transaction = (event.target as IDBOpenDBRequest).transaction!;
+            const store = transaction.objectStore(STORE_NAME);
+            if (!store.indexNames.contains('sessionId')) {
+              store.createIndex('sessionId', 'sessionId', { unique: false });
+            }
           }
         };
       } catch {
         resolve(false);
       }
     });
+  }
+
+  /**
+   * 将 v1.3.x 的旧格式数据迁移为增量 chunk 格式
+   */
+  private async migrateLegacyData(): Promise<void> {
+    if (!this.db) return;
+
+    try {
+      const all = await this.getAllInternal();
+      for (const item of all) {
+        if (!('sessionId' in item) || !(item as any).sessionId) {
+          const legacy = item as unknown as LegacyCachedRecording;
+          const migrated: CachedChunk = {
+            id: `${legacy.id}:0`,
+            sessionId: legacy.id,
+            cacheChunkIndex: 0,
+            events: legacy.events,
+            tags: legacy.tags,
+            startTime: legacy.startTime,
+            url: legacy.url,
+            userAgent: legacy.userAgent,
+            screenResolution: legacy.screenResolution,
+            viewport: legacy.viewport,
+            updatedAt: legacy.updatedAt,
+            lastChunkEventIndex: legacy.lastChunkEventIndex,
+            chunkIndex: legacy.chunkIndex,
+          };
+
+          try {
+            await this.putInternal(migrated);
+            await this.deleteInternal(legacy.id);
+          } catch {
+            // 单行迁移失败，保留旧数据，继续处理下一行
+          }
+        }
+      }
+    } catch {
+      // getAllInternal 失败，跳过整个迁移
+    }
   }
 
   /**
@@ -100,39 +169,43 @@ export class CacheManager {
       const now = Date.now();
       const toDelete: string[] = [];
 
-      // Phase 1: 过期清理
       for (const item of all) {
         if (now - item.updatedAt > this.maxAge) {
           toDelete.push(item.id);
         }
       }
 
-      // Phase 2: 条数限制（排除已标记删除的）
+      // 按 session 分组计数
       const remaining = all.filter((item) => !toDelete.includes(item.id));
-      if (remaining.length > this.maxItems) {
-        remaining.sort((a, b) => a.updatedAt - b.updatedAt);
-        const excess = remaining.length - this.maxItems;
-        for (let i = 0; i < excess; i++) {
-          toDelete.push(remaining[i].id);
+      const sessionIds = new Set(remaining.map(c => (c as CachedChunk).sessionId || c.id));
+      if (sessionIds.size > this.maxItems) {
+        const sessionUpdatedAt = new Map<string, number>();
+        for (const item of remaining) {
+          const sid = (item as CachedChunk).sessionId || item.id;
+          const existing = sessionUpdatedAt.get(sid) || 0;
+          if (item.updatedAt > existing) sessionUpdatedAt.set(sid, item.updatedAt);
+        }
+        const sorted = [...sessionUpdatedAt.entries()].sort((a, b) => a[1] - b[1]);
+        const excess = sorted.length - this.maxItems;
+        const sessionsToDelete = new Set(sorted.slice(0, excess).map(s => s[0]));
+        for (const item of remaining) {
+          const sid = (item as CachedChunk).sessionId || item.id;
+          if (sessionsToDelete.has(sid)) {
+            toDelete.push(item.id);
+          }
         }
       }
 
-      // 执行删除
       if (toDelete.length > 0) {
         await this.deleteBatch(toDelete);
       }
 
-      // Phase 3: 存储空间预警（仅在 navigator.storage.estimate 可用时）
       await this.cleanupByStorageQuota();
     } catch {
       // 静默处理
     }
   }
 
-  /**
-   * 基于存储空间配额的清理
-   * 当使用量超过 80% 时，逐条删除最旧的缓存直到低于阈值
-   */
   private async cleanupByStorageQuota(): Promise<void> {
     if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return;
 
@@ -146,20 +219,16 @@ export class CacheManager {
       const all = await this.getAllInternal();
       if (all.length <= 1) return;
 
-      // 按时间排序，删除最旧的一半
       all.sort((a, b) => a.updatedAt - b.updatedAt);
       const deleteCount = Math.ceil(all.length / 2);
       const toDelete = all.slice(0, deleteCount).map((item) => item.id);
       await this.deleteBatch(toDelete);
     } catch {
-      // navigator.storage.estimate 可能失败，静默处理
+      // 静默处理
     }
   }
 
-  /**
-   * 内部方法：获取所有缓存条目
-   */
-  private getAllInternal(): Promise<CachedRecording[]> {
+  private getAllInternal(): Promise<any[]> {
     if (!this.db) return Promise.resolve([]);
 
     return new Promise((resolve) => {
@@ -181,9 +250,38 @@ export class CacheManager {
     });
   }
 
-  /**
-   * 批量删除
-   */
+  private putInternal(data: CachedChunk): Promise<void> {
+    if (!this.db) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.put(data);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(new Error('IndexedDB put failed'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  private deleteInternal(id: string): Promise<void> {
+    if (!this.db) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      try {
+        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.delete(id);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
   private deleteBatch(ids: string[]): Promise<void> {
     if (!this.db || ids.length === 0) return Promise.resolve();
 
@@ -202,63 +300,94 @@ export class CacheManager {
     });
   }
 
+  // ==================== 公开 API ====================
+
   /**
-   * 保存录制数据到缓存
+   * 保存增量 chunk
    */
-  async save(data: CachedRecording): Promise<void> {
+  async saveChunk(data: Omit<CachedChunk, 'id'>): Promise<void> {
     const ready = await this.dbReady;
     if (!ready || !this.db) return;
 
-    return new Promise<void>((resolve) => {
-      try {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const record = { ...data, updatedAt: Date.now() };
+    const chunk: CachedChunk = {
+      ...data,
+      id: `${data.sessionId}:${data.cacheChunkIndex}`,
+      updatedAt: Date.now(),
+    };
 
-        const getRequest = store.get(data.id);
-        getRequest.onsuccess = () => {
-          const isUpdate = !!getRequest.result;
-          store.put(record);
-
-          if (!isUpdate) {
-            const countRequest = store.count();
-            countRequest.onsuccess = () => {
-              if (countRequest.result > this.maxItems) {
-                const getAllRequest = store.getAll();
-                getAllRequest.onsuccess = () => {
-                  const all = getAllRequest.result as CachedRecording[];
-                  all.sort((a, b) => a.updatedAt - b.updatedAt);
-                  const oldest = all.find((item) => item.id !== data.id);
-                  if (oldest) {
-                    store.delete(oldest.id);
-                  }
-                };
-              }
-            };
-          }
-        };
-
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => resolve();
-      } catch {
-        resolve();
-      }
-    });
+    await this.putInternal(chunk);
   }
 
   /**
-   * 获取所有未完成的录制（自动过滤过期条目）
+   * 获取所有不同 sessionId 的列表
    */
-  async getAll(): Promise<CachedRecording[]> {
+  async getAllSessions(): Promise<{ sessionId: string; updatedAt: number }[]> {
     const ready = await this.dbReady;
     if (!ready || !this.db) return [];
 
-    const all = await this.getAllInternal();
+    const all = await this.getAllInternal() as CachedChunk[];
+    const now = Date.now();
+    const sessionMap = new Map<string, number>();
+
+    for (const item of all) {
+      if (now - item.updatedAt > this.maxAge) continue;
+      const sid = item.sessionId || item.id;
+      const existing = sessionMap.get(sid) || 0;
+      if (item.updatedAt > existing) sessionMap.set(sid, item.updatedAt);
+    }
+
+    return [...sessionMap.entries()].map(([sessionId, updatedAt]) => ({ sessionId, updatedAt }));
+  }
+
+  /**
+   * 获取指定 session 的所有缓存 chunk
+   */
+  async getSessionChunks(sessionId: string): Promise<CachedChunk[]> {
+    const ready = await this.dbReady;
+    if (!ready || !this.db) return [];
+
+    const all = await this.getAllInternal() as CachedChunk[];
+    return all.filter(item =>
+      (item.sessionId === sessionId) ||
+      (!item.sessionId && item.id === sessionId)
+    );
+  }
+
+  /**
+   * 删除单个 chunk 条目
+   */
+  async deleteChunk(id: string): Promise<void> {
+    const ready = await this.dbReady;
+    if (!ready || !this.db) return;
+    await this.deleteInternal(id);
+  }
+
+  /**
+   * 删除指定 session 的所有缓存 chunk
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const ready = await this.dbReady;
+    if (!ready || !this.db) return;
+
+    const chunks = await this.getSessionChunks(sessionId);
+    const ids = chunks.map(c => c.id);
+    // 也尝试删除旧格式 key
+    ids.push(sessionId);
+    await this.deleteBatch(ids);
+  }
+
+  /**
+   * 获取所有缓存条目（兼容旧 API）
+   */
+  async getAll(): Promise<CachedChunk[]> {
+    const ready = await this.dbReady;
+    if (!ready || !this.db) return [];
+
+    const all = await this.getAllInternal() as CachedChunk[];
     if (all.length === 0) return [];
 
-    // 过滤过期条目并异步清理
     const now = Date.now();
-    const valid: CachedRecording[] = [];
+    const valid: CachedChunk[] = [];
     const expired: string[] = [];
 
     for (const item of all) {
@@ -277,23 +406,10 @@ export class CacheManager {
   }
 
   /**
-   * 删除指定的录制缓存
+   * @deprecated Use deleteSession instead
    */
   async delete(sessionId: string): Promise<void> {
-    const ready = await this.dbReady;
-    if (!ready || !this.db) return;
-
-    return new Promise<void>((resolve) => {
-      try {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        store.delete(sessionId);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => resolve();
-      } catch {
-        resolve();
-      }
-    });
+    return this.deleteSession(sessionId);
   }
 
   /**
@@ -314,26 +430,5 @@ export class CacheManager {
         resolve();
       }
     });
-  }
-
-  /**
-   * 将缓存数据转换为 RawRecordingData
-   */
-  toRawRecordingData(cached: CachedRecording): Omit<RawRecordingData, 'endTime' | 'duration'> & {
-    lastChunkEventIndex: number;
-    chunkIndex: number;
-  } {
-    return {
-      sessionId: cached.id,
-      events: cached.events,
-      tags: cached.tags,
-      startTime: cached.startTime,
-      url: cached.url,
-      userAgent: cached.userAgent,
-      screenResolution: cached.screenResolution,
-      viewport: cached.viewport,
-      lastChunkEventIndex: cached.lastChunkEventIndex ?? 0,
-      chunkIndex: cached.chunkIndex ?? 0,
-    };
   }
 }

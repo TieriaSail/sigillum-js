@@ -42,13 +42,14 @@ pnpm add sigillum-js
 import { getRecorder } from 'sigillum-js';
 
 const recorder = getRecorder({
-  onUpload: async (data) => {
+  onUpload: async (chunk) => {
     await fetch('/api/recordings', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(chunk),
     });
     return { success: true };
   },
+  chunkedUpload: { enabled: true, interval: 60000 },
 });
 
 recorder.start();
@@ -57,7 +58,7 @@ recorder.start();
 await recorder.stop();
 ```
 
-That's it. The recorder captures everything automatically — mouse movement, scrolling, inputs, and route changes. When `stop()` is called, data is uploaded via your `onUpload` callback.
+That's it. The recorder captures everything automatically — mouse movement, scrolling, inputs, and route changes. All uploads go through a single `onUpload` callback — whether it's a timed chunk, final upload on stop, or crash recovery.
 
 ### Local-only mode (no upload)
 
@@ -92,10 +93,11 @@ import { useAutoRecord } from 'sigillum-js/react';
 
 function App() {
   const { status, sessionId, addTag, identify } = useAutoRecord({
-    onUpload: async (data) => {
-      await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    onUpload: async (chunk) => {
+      await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(chunk) });
       return { success: true };
     },
+    chunkedUpload: { enabled: true, interval: 60000 },
   });
 
   identify('user-123', { plan: 'pro' });
@@ -115,10 +117,11 @@ import { createSigillumPlugin } from 'sigillum-js/vue';
 
 const app = createApp(App);
 app.use(createSigillumPlugin({
-  onUpload: async (data) => {
-    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+  onUpload: async (chunk) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(chunk) });
     return { success: true };
   },
+  chunkedUpload: { enabled: true, interval: 60000 },
   autoStart: true,
 }));
 app.mount('#app');
@@ -223,22 +226,25 @@ resetRecorder();
 
 ```typescript
 const recorder = getRecorder({
-  // Upload (optional — without it, runs in local-only mode)
-  onUpload: async (data) => { return { success: true }; },
+  // Unified upload callback (optional — without it, runs in local-only mode)
+  // Handles timed chunks, final upload, and crash recovery — all in one callback
+  onUpload: async (chunk) => {
+    // chunk.sessionId, chunk.chunkIndex, chunk.isFinal, chunk.events, ...
+    return { success: true };
+  },
 
   // Field mapping (adapt to your backend schema)
   fieldMapping: [['sessionId', 'id'], ['events', 'content', JSON.stringify, JSON.parse]],
-  beforeUpload: (data) => ({ ...data, userId: getCurrentUserId() }),
+  beforeUpload: (chunk) => ({ ...chunk, userId: getCurrentUserId() }),
 
   // Enable condition
   enabled: () => user.isVIP || Math.random() < 0.1,
 
-  // Crash recovery cache
+  // Crash recovery cache (incremental — each save only writes new events)
   cache: { enabled: true, saveInterval: 5000, maxItems: 10, maxAge: 604800000 },
 
   // Chunked upload (for long recordings)
   chunkedUpload: { enabled: true, interval: 60000 },
-  onChunkUpload: async (chunk) => { return { success: true }; },
 
   // Callbacks
   onEventEmit: (event, count) => {},

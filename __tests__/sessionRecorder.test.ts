@@ -168,15 +168,18 @@ describe('SessionRecorder', () => {
       recorder = new SessionRecorder(defaultOptions);
     });
 
-    it('stop 时有事件应调用 onUpload', async () => {
+    it('stop 时有事件应调用 onUpload（统一 chunk 格式）', async () => {
       recorder.start();
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
       await recorder.stop();
 
       expect(defaultOptions.onUpload).toHaveBeenCalledTimes(1);
-      const uploadData = defaultOptions.onUpload.mock.calls[0][0];
-      expect(uploadData.sessionId).toBeTruthy();
-      expect(uploadData.events).toHaveLength(1);
+      const chunk = defaultOptions.onUpload.mock.calls[0][0];
+      expect(chunk.sessionId).toBeTruthy();
+      expect(chunk.events).toHaveLength(1);
+      expect(chunk.isFinal).toBe(true);
+      expect(chunk.chunkIndex).toBe(0);
+      expect(chunk.summary).toBeDefined();
     });
 
     it('stop 时无事件不应调用 onUpload', async () => {
@@ -203,30 +206,11 @@ describe('SessionRecorder', () => {
       expect(failUpload).toHaveBeenCalledTimes(2);
     }, 10000);
 
-    it('字段映射应在上传时生效', async () => {
-      const rec = new SessionRecorder({
-        ...defaultOptions,
-        fieldMapping: [
-          ['sessionId', 'id'],
-          ['events', 'content', JSON.stringify, JSON.parse],
-        ],
-      });
-
-      rec.start();
-      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
-      await rec.stop();
-
-      const uploadData = defaultOptions.onUpload.mock.calls[0][0];
-      expect(uploadData.id).toBeTruthy();
-      expect(typeof uploadData.content).toBe('string');
-      expect(uploadData.sessionId).toBeUndefined();
-    });
-
     it('beforeUpload 应在上传前处理数据', async () => {
       const rec = new SessionRecorder({
         ...defaultOptions,
-        beforeUpload: (data) => ({
-          ...data,
+        beforeUpload: (chunk) => ({
+          ...chunk,
           userId: 'user-123',
         }),
       });
@@ -237,6 +221,45 @@ describe('SessionRecorder', () => {
 
       const uploadData = defaultOptions.onUpload.mock.calls[0][0];
       expect(uploadData.userId).toBe('user-123');
+    });
+
+    it('onChunkUpload 作为 deprecated fallback 应正常工作', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const rec = new SessionRecorder({
+        cache: { enabled: false },
+        onChunkUpload,
+      });
+
+      rec.start();
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      await rec.stop();
+
+      expect(onChunkUpload).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('onChunkUpload is deprecated'));
+      warnSpy.mockRestore();
+    });
+
+    it('同时提供 onUpload 和 onChunkUpload 时 onUpload 优先', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const rec = new SessionRecorder({
+        cache: { enabled: false },
+        onUpload,
+        onChunkUpload,
+      });
+
+      rec.start();
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      await rec.stop();
+
+      expect(onUpload).toHaveBeenCalledTimes(1);
+      expect(onChunkUpload).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('onUpload will be used'));
+      warnSpy.mockRestore();
     });
   });
 
@@ -425,7 +448,7 @@ describe('SessionRecorder', () => {
       const failUpload = vi.fn().mockRejectedValue(new Error('Network error'));
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         onUpload: failUpload,
         onError,
         maxRetries: 1,
@@ -806,15 +829,15 @@ describe('SessionRecorder', () => {
       expect(metadata!.connectionType).toBeDefined();
     });
 
-    it('stop 后上传数据应包含 metadata', async () => {
+    it('stop 后上传数据应包含 metadata（首个 chunk）', async () => {
       recorder = new SessionRecorder(defaultOptions);
       recorder.start();
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
       await recorder.stop();
 
-      const uploadData = defaultOptions.onUpload.mock.calls[0][0];
-      expect(uploadData.metadata).toBeDefined();
-      expect(uploadData.metadata.language).toBeDefined();
+      const chunk = defaultOptions.onUpload.mock.calls[0][0];
+      expect(chunk.metadata).toBeDefined();
+      expect(chunk.metadata.language).toBeDefined();
     });
   });
 
@@ -1067,7 +1090,7 @@ describe('SessionRecorder', () => {
       }
     });
 
-    it('stop 后上传数据应包含 summary', async () => {
+    it('stop 后上传 chunk 应包含 summary', async () => {
       recorder = new SessionRecorder(defaultOptions);
       recorder.start();
 
@@ -1084,11 +1107,11 @@ describe('SessionRecorder', () => {
 
       await recorder.stop();
 
-      const uploadData = defaultOptions.onUpload.mock.calls[0][0];
-      expect(uploadData.summary).toBeDefined();
-      expect(uploadData.summary.clickCount).toBe(1);
-      expect(uploadData.summary.inputCount).toBe(1);
-      expect(uploadData.summary.totalEvents).toBe(2);
+      const chunk = defaultOptions.onUpload.mock.calls[0][0];
+      expect(chunk.summary).toBeDefined();
+      expect(chunk.summary.clickCount).toBe(1);
+      expect(chunk.summary.inputCount).toBe(1);
+      expect(chunk.summary.totalEvents).toBe(2);
     });
   });
 
@@ -1102,40 +1125,38 @@ describe('SessionRecorder', () => {
     });
 
     it('启用分段上传应按间隔上传', async () => {
-      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 1000 },
-        onChunkUpload,
+        onUpload,
       });
 
       recorder.start();
 
-      // 添加一些事件
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
       mockEmitFn?.({ type: 3, data: { source: 3 }, timestamp: Date.now() });
 
-      // 推进时间触发分段上传
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(onChunkUpload).toHaveBeenCalledTimes(1);
-      const chunk = onChunkUpload.mock.calls[0][0];
+      expect(onUpload).toHaveBeenCalledTimes(1);
+      const chunk = onUpload.mock.calls[0][0];
       expect(chunk.sessionId).toBeTruthy();
       expect(chunk.chunkIndex).toBe(0);
       expect(chunk.isFinal).toBe(false);
       expect(chunk.events.length).toBe(2);
       expect(chunk.summary).toBeDefined();
-      expect(chunk.metadata).toBeDefined(); // 第一个分段包含 metadata
+      expect(chunk.metadata).toBeDefined();
     });
 
     it('第二个分段不应包含 metadata', async () => {
-      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 1000 },
-        onChunkUpload,
+        onUpload,
       });
 
       recorder.start();
@@ -1146,36 +1167,35 @@ describe('SessionRecorder', () => {
       mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(onChunkUpload).toHaveBeenCalledTimes(2);
-      const chunk2 = onChunkUpload.mock.calls[1][0];
+      expect(onUpload).toHaveBeenCalledTimes(2);
+      const chunk2 = onUpload.mock.calls[1][0];
       expect(chunk2.chunkIndex).toBe(1);
-      expect(chunk2.metadata).toBeUndefined(); // 非第一个分段
+      expect(chunk2.metadata).toBeUndefined();
     });
 
     it('无新事件时不应上传分段', async () => {
-      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 1000 },
-        onChunkUpload,
+        onUpload,
       });
 
       recorder.start();
 
-      // 不添加事件，推进时间
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(onChunkUpload).not.toHaveBeenCalled();
+      expect(onUpload).not.toHaveBeenCalled();
     });
 
     it('stop 时应上传最终分段（isFinal: true）', async () => {
-      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 60000 },
-        onChunkUpload,
+        onUpload,
       });
 
       recorder.start();
@@ -1183,60 +1203,59 @@ describe('SessionRecorder', () => {
 
       await recorder.stop();
 
-      expect(onChunkUpload).toHaveBeenCalledTimes(1);
-      const chunk = onChunkUpload.mock.calls[0][0];
+      expect(onUpload).toHaveBeenCalledTimes(1);
+      const chunk = onUpload.mock.calls[0][0];
       expect(chunk.isFinal).toBe(true);
     });
 
-    it('未启用分段上传不应调用 onChunkUpload', async () => {
-      const onChunkUpload = vi.fn();
+    it('未启用分段上传但有 onUpload 时 stop 仍应上传最终分段', async () => {
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
-        onChunkUpload,
-        // chunkedUpload 未配置
+        cache: { enabled: false },
+        onUpload,
       });
 
       recorder.start();
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
       await recorder.stop();
 
-      expect(onChunkUpload).not.toHaveBeenCalled();
+      expect(onUpload).toHaveBeenCalledTimes(1);
+      const chunk = onUpload.mock.calls[0][0];
+      expect(chunk.isFinal).toBe(true);
     });
 
     it('分段上传只包含该分段内的新事件', async () => {
-      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 1000 },
-        onChunkUpload,
+        onUpload,
       });
 
       recorder.start();
 
-      // 第一段：2 个事件
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
       mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
       await vi.advanceTimersByTimeAsync(1000);
 
-      // 第二段：1 个事件
       mockEmitFn?.({ type: 3, data: { source: 5 }, timestamp: Date.now() });
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(onChunkUpload).toHaveBeenCalledTimes(2);
-      expect(onChunkUpload.mock.calls[0][0].events.length).toBe(2);
-      expect(onChunkUpload.mock.calls[1][0].events.length).toBe(1);
+      expect(onUpload).toHaveBeenCalledTimes(2);
+      expect(onUpload.mock.calls[0][0].events.length).toBe(2);
+      expect(onUpload.mock.calls[1][0].events.length).toBe(1);
     });
 
     it('分段上传错误不应中断录制', async () => {
-      const onChunkUpload = vi.fn().mockRejectedValue(new Error('upload failed'));
+      const onUpload = vi.fn().mockRejectedValue(new Error('upload failed'));
       const onError = vi.fn();
 
       recorder = new SessionRecorder({
-        ...defaultOptions,
+        cache: { enabled: false },
         chunkedUpload: { enabled: true, interval: 1000 },
-        onChunkUpload,
+        onUpload,
         onError,
         maxRetries: 0,
       });
@@ -1244,15 +1263,44 @@ describe('SessionRecorder', () => {
       recorder.start();
       mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
 
-      // 触发 setInterval 回调 + 等待 async uploadChunk 完成
       await vi.advanceTimersByTimeAsync(1000);
-      // 额外刷新微任务队列，确保 uploadChunk 内部的 await 链完成
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(0);
 
-      // 录制应继续
       expect(recorder.getStatus()).toBe('recording');
       expect(onError).toHaveBeenCalled();
+    });
+
+    it('上传失败应回滚进度，下次包含之前失败的事件', async () => {
+      const onUpload = vi.fn()
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValue({ success: true });
+
+      recorder = new SessionRecorder({
+        cache: { enabled: false },
+        chunkedUpload: { enabled: true, interval: 1000 },
+        onUpload,
+        maxRetries: 0,
+      });
+
+      recorder.start();
+
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
+
+      // 第一次上传失败
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // 添加更多事件
+      mockEmitFn?.({ type: 3, data: { source: 5 }, timestamp: Date.now() });
+
+      // 第二次上传应包含所有事件（包括之前失败的）
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const lastCall = onUpload.mock.calls[onUpload.mock.calls.length - 1][0];
+      expect(lastCall.events.length).toBe(3);
+      expect(lastCall.chunkIndex).toBe(0); // 回滚后仍是 chunk 0
     });
   });
 

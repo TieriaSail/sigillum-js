@@ -42,13 +42,14 @@ pnpm add sigillum-js
 import { getRecorder } from 'sigillum-js';
 
 const recorder = getRecorder({
-  onUpload: async (data) => {
+  onUpload: async (chunk) => {
     await fetch('/api/recordings', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(chunk),
     });
     return { success: true };
   },
+  chunkedUpload: { enabled: true, interval: 60000 },
 });
 
 recorder.start();
@@ -57,7 +58,7 @@ recorder.start();
 await recorder.stop();
 ```
 
-就这样。录制器自动捕获所有用户操作 —— 鼠标移动、滚动、输入和路由跳转。调用 `stop()` 后，数据通过你的 `onUpload` 回调上传。
+就这样。录制器自动捕获所有用户操作 —— 鼠标移动、滚动、输入和路由跳转。所有上传走统一的 `onUpload` 回调 —— 无论是定时分段、停止时的最终上传，还是崩溃恢复。
 
 ### 纯本地模式（不上传）
 
@@ -92,10 +93,11 @@ import { useAutoRecord } from 'sigillum-js/react';
 
 function App() {
   const { status, sessionId, addTag, identify } = useAutoRecord({
-    onUpload: async (data) => {
-      await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    onUpload: async (chunk) => {
+      await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(chunk) });
       return { success: true };
     },
+    chunkedUpload: { enabled: true, interval: 60000 },
   });
 
   identify('user-123', { plan: 'pro' });
@@ -115,10 +117,11 @@ import { createSigillumPlugin } from 'sigillum-js/vue';
 
 const app = createApp(App);
 app.use(createSigillumPlugin({
-  onUpload: async (data) => {
-    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+  onUpload: async (chunk) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(chunk) });
     return { success: true };
   },
+  chunkedUpload: { enabled: true, interval: 60000 },
   autoStart: true,
 }));
 app.mount('#app');
@@ -223,22 +226,25 @@ resetRecorder();
 
 ```typescript
 const recorder = getRecorder({
-  // 上传（可选 — 不提供则为纯本地模式）
-  onUpload: async (data) => { return { success: true }; },
+  // 统一上传回调（可选 — 不提供则为纯本地模式）
+  // 定时分段、最终上传、崩溃恢复 —— 全部走同一个回调
+  onUpload: async (chunk) => {
+    // chunk.sessionId, chunk.chunkIndex, chunk.isFinal, chunk.events, ...
+    return { success: true };
+  },
 
   // 字段映射（适配后端数据结构）
   fieldMapping: [['sessionId', 'id'], ['events', 'content', JSON.stringify, JSON.parse]],
-  beforeUpload: (data) => ({ ...data, userId: getCurrentUserId() }),
+  beforeUpload: (chunk) => ({ ...chunk, userId: getCurrentUserId() }),
 
   // 启用条件
   enabled: () => user.isVIP || Math.random() < 0.1,
 
-  // 防崩溃缓存
+  // 防崩溃缓存（增量写入 — 每次仅保存新事件）
   cache: { enabled: true, saveInterval: 5000, maxItems: 10, maxAge: 604800000 },
 
   // 分段上传（长录制场景）
   chunkedUpload: { enabled: true, interval: 60000 },
-  onChunkUpload: async (chunk) => { return { success: true }; },
 
   // 回调
   onEventEmit: (event, count) => {},

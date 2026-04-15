@@ -357,8 +357,8 @@ Same as above, plus:
 | `monitoring.scrollDepth` | `boolean` | preset default | Track max scroll depth per page |
 | `monitoring.rules` | `ActionRule[]` | `[]` | Custom action rules |
 | `monitoring.eventFilter` | `function` | — | Global event filter |
-| `onUpload` | `function` | — | Upload callback |
-| `onChunkUpload` | `function` | — | Chunked upload callback |
+| `onUpload` | `function` | — | Unified upload callback (handles timed chunks, final upload, and crash recovery) |
+| `onChunkUpload` | `function` | — | **Deprecated** — use `onUpload` instead. Will be removed in the next major version. |
 | `chunkedUpload.enabled` | `boolean` | `false` | Enable chunked upload |
 | `chunkedUpload.interval` | `number` | `60000` | Chunk interval (ms) |
 | `maskInputs` | `boolean` | `false` | Mask input values (see [Privacy Protection](#privacy-protection)) |
@@ -464,10 +464,10 @@ Starting from v2.0, `exportRecording()` on both Web and MiniApp returns a **Sigi
 |----------|-------------|
 | MiniApp `onUpload` callback | `SigillumRecording<MiniAppRawRecordingData>` |
 | MiniApp `exportRecording()` | `SigillumRecording<MiniAppRawRecordingData>` |
-| Web `onUpload` callback | `Record<string, any>` (after fieldMapper transform) |
+| Web `onUpload` callback | `RecordingChunk` (unified chunk format with `sessionId`, `chunkIndex`, `isFinal`, `events`, etc.) |
 | Web `exportRecording()` | `SigillumRecording<RawRecordingData>` |
 
-> Web's `onUpload` goes through `FieldMapper` for backend compatibility, so it does not use the envelope format. Use `exportRecording()` for standardized output.
+> Web's `onUpload` now receives a `RecordingChunk` directly — the same format for timed chunks, final upload, and crash recovery. Use `exportRecording()` for the full envelope format.
 
 ### Backward compatibility
 

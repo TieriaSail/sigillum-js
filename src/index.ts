@@ -9,17 +9,14 @@
  * import { getRecorder } from 'sigillum-js';
  *
  * const recorder = getRecorder({
- *   onUpload: async (data) => {
+ *   onUpload: async (chunk) => {
  *     await fetch('/api/recordings', {
  *       method: 'POST',
- *       body: JSON.stringify(data),
+ *       body: JSON.stringify(chunk),
  *     });
  *     return { success: true };
  *   },
- *   fieldMapping: [
- *     ['sessionId', 'id'],
- *     ['events', 'content', JSON.stringify, JSON.parse],
- *   ],
+ *   chunkedUpload: { enabled: true, interval: 60000 },
  * });
  *
  * recorder.start();
@@ -87,6 +84,7 @@ export {
 // ==================== 工具 ====================
 export { FieldMapper, createFieldMapper, DEFAULT_FIELD_MAPPING } from './FieldMapper';
 export { CacheManager } from './CacheManager';
+export type { CachedChunk } from './CacheManager';
 export { checkCompatibility, isBrowser } from './compatibility';
 export type { CompatibilityResult } from './compatibility';
 

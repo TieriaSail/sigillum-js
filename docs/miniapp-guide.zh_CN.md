@@ -357,8 +357,8 @@ player.play();
 | `monitoring.scrollDepth` | `boolean` | 预设默认值 | 是否追踪页面最大滚动深度 |
 | `monitoring.rules` | `ActionRule[]` | `[]` | 自定义行为规则 |
 | `monitoring.eventFilter` | `function` | — | 全局事件过滤器 |
-| `onUpload` | `function` | — | 上传回调 |
-| `onChunkUpload` | `function` | — | 分段上传回调 |
+| `onUpload` | `function` | — | 统一上传回调（处理定时分段、最终上传和崩溃恢复） |
+| `onChunkUpload` | `function` | — | **已废弃** — 请使用 `onUpload` 代替，将在下一个大版本移除 |
 | `chunkedUpload.enabled` | `boolean` | `false` | 启用分段上传 |
 | `chunkedUpload.interval` | `number` | `60000` | 分段间隔（ms） |
 | `maskInputs` | `boolean` | `false` | 遮蔽输入值（参见[隐私保护](#隐私保护)） |
@@ -464,10 +464,10 @@ getRecorder({
 |------|----------|
 | 小程序 `onUpload` 回调 | `SigillumRecording<MiniAppRawRecordingData>` |
 | 小程序 `exportRecording()` | `SigillumRecording<MiniAppRawRecordingData>` |
-| Web `onUpload` 回调 | `Record<string, any>`（经 fieldMapper 转换） |
+| Web `onUpload` 回调 | `RecordingChunk`（统一分段格式，含 `sessionId`、`chunkIndex`、`isFinal`、`events` 等） |
 | Web `exportRecording()` | `SigillumRecording<RawRecordingData>` |
 
-> Web 端的 `onUpload` 经过 `FieldMapper` 转换以适配后端字段，不使用信封格式。如需标准化输出，请使用 `exportRecording()`。
+> Web 端的 `onUpload` 现在直接接收 `RecordingChunk` —— 定时分段、最终上传和崩溃恢复统一使用同一格式。如需完整信封格式，请使用 `exportRecording()`。
 
 ### 向后兼容
 
