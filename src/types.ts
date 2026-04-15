@@ -499,6 +499,40 @@ export interface RecordingChunk {
 
 // ==================== 录制状态 ====================
 
+// ==================== 缓存 ====================
+
+/** 缓存的增量数据块（CacheManager 内部使用） */
+export interface CachedChunk {
+  /** 复合键: `${sessionId}_${cacheChunkIndex}` */
+  id: string;
+  /** 所属会话 ID */
+  sessionId: string;
+  /** 缓存块顺序索引（单调递增） */
+  cacheChunkIndex: number;
+  /** 该块包含的事件 */
+  events: EventWithTime[];
+  /** 该块包含的标记 */
+  tags: TagInfo[];
+  /** 会话开始时间 */
+  startTime: number;
+  /** 页面 URL */
+  url: string;
+  /** 用户代理 */
+  userAgent: string;
+  /** 屏幕分辨率 */
+  screenResolution: string;
+  /** 视口大小 */
+  viewport: { width: number; height: number };
+  /** 写入时间 */
+  updatedAt: number;
+  /** 已上传的分段 chunk 索引 */
+  chunkIndex?: number;
+  /** 已上传的事件截止索引 */
+  lastChunkEventIndex?: number;
+}
+
+// ==================== 录制状态 ====================
+
 /** 录制状态 */
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 

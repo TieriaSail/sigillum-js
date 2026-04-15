@@ -269,6 +269,84 @@ const recorder = getRecorder({
 ```
 </details>
 
+## Upload Configuration Guide
+
+In 1.x, there are **two independent upload callbacks** serving different purposes:
+
+| Callback | Trigger | Data Format | Field Mapping |
+|----------|---------|-------------|---------------|
+| `onUpload` | `stop()` is called | `Record<string, any>` (via `FieldMapper`) | `fieldMapping` + `beforeUpload` applied |
+| `onChunkUpload` | Timer interval during recording | `RecordingChunk` (raw) | **Not** processed by `fieldMapping` |
+
+The two callbacks are **independent** — `onUpload` never receives chunked data, and `onChunkUpload` never goes through `fieldMapping`.
+
+### Recommended Patterns
+
+<details>
+<summary><b>Pattern A: Upload on stop (simple)</b></summary>
+
+Best for short recordings. All data is uploaded at once when `stop()` is called.
+
+```typescript
+const recorder = getRecorder({
+  onUpload: async (data) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    return { success: true };
+  },
+  fieldMapping: [['sessionId', 'id'], ['events', 'content', JSON.stringify, JSON.parse]],
+});
+```
+</details>
+
+<details>
+<summary><b>Pattern B: Chunked upload (long recordings)</b></summary>
+
+Best for recordings that may last minutes. Data is streamed in chunks during recording.
+
+```typescript
+const recorder = getRecorder({
+  chunkedUpload: { enabled: true, interval: 60000 },
+  onChunkUpload: async (chunk) => {
+    await fetch('/api/recording-chunks', { method: 'POST', body: JSON.stringify(chunk) });
+    return { success: true };
+  },
+});
+```
+
+> Note: `fieldMapping` does **not** apply to `onChunkUpload`. Transform the `RecordingChunk` yourself if needed.
+</details>
+
+<details>
+<summary><b>Pattern C: Chunked + stop fallback (safest)</b></summary>
+
+Combines both — chunks are uploaded during recording, and a full upload happens on stop as a safety net. Your backend must handle both data formats.
+
+```typescript
+const recorder = getRecorder({
+  chunkedUpload: { enabled: true, interval: 60000 },
+  onChunkUpload: async (chunk) => {
+    await fetch('/api/recording-chunks', { method: 'POST', body: JSON.stringify(chunk) });
+    return { success: true };
+  },
+  onUpload: async (data) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    return { success: true };
+  },
+  fieldMapping: [['sessionId', 'id']],
+});
+```
+</details>
+
+### Common Mistakes
+
+| Mistake | Problem |
+|---------|---------|
+| `onUpload` set + `chunkedUpload.enabled: true` but no `onChunkUpload` | Chunks have nowhere to go — only the final `onUpload` fires |
+| `onChunkUpload` set but `chunkedUpload.enabled` is `false`/missing | `onChunkUpload` is never called |
+| Expecting `fieldMapping` to apply to `onChunkUpload` | `fieldMapping` only applies to `onUpload` |
+
+> **Looking for a simpler API?** In 2.0 (beta), `onUpload` and `onChunkUpload` have been unified into a single `onUpload` callback. Try it with `npm install sigillum-js@beta`.
+
 ## Compatibility
 
 | Browser | Version |

@@ -29,6 +29,7 @@ import type {
   RecordingSummary,
   RouteChange,
   RecordingChunk,
+  CachedChunk,
   UserIdentity,
 } from './types';
 import { FieldMapper } from './FieldMapper';
@@ -164,8 +165,15 @@ export class SessionRecorder {
   private chunkTimer: number | null = null;
   private chunkIndex: number = 0;
   private lastChunkEventIndex: number = 0;
-  private lastCachedEventCount: number = 0;
-  private lastCachedChunkIndex: number = 0;
+
+  // ========== 上传互斥 (H1 修复) ==========
+  private uploadingChunk: boolean = false;
+
+  // ========== 增量缓存 ==========
+  private lastCachedEventIndex: number = 0;
+  private cacheChunkWriteIndex: number = 0;
+  /** 防止 stop() 后的异步缓存写入 (H2 修复) */
+  private cacheStopped: boolean = false;
 
   constructor(options: SessionRecorderOptions) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -433,13 +441,29 @@ export class SessionRecorder {
   }
 
   /**
-   * 上传一个分段（含重试）
+   * 上传一个分段（互斥锁 + 含重试 + 失败回滚）
    */
-  private async uploadChunk(isFinal: boolean): Promise<void> {
-    if (!this.options.onChunkUpload) return;
+  private async uploadChunk(isFinal: boolean): Promise<boolean> {
+    if (!this.options.onChunkUpload) return false;
+
+    if (this.uploadingChunk) {
+      this.log('Upload already in progress, skipping');
+      return false;
+    }
+
+    this.uploadingChunk = true;
+    try {
+      return await this._doUploadChunk(isFinal);
+    } finally {
+      this.uploadingChunk = false;
+    }
+  }
+
+  private async _doUploadChunk(isFinal: boolean): Promise<boolean> {
+    if (!this.options.onChunkUpload) return false;
 
     const newEvents = this.events.slice(this.lastChunkEventIndex);
-    if (newEvents.length === 0 && !isFinal) return;
+    if (newEvents.length === 0 && !isFinal) return false;
 
     const chunk: RecordingChunk = {
       sessionId: this.sessionId,
@@ -453,6 +477,9 @@ export class SessionRecorder {
       metadata: this.chunkIndex === 0 ? (this.metadata || undefined) : undefined,
     };
 
+    const savedLastChunkEventIndex = this.lastChunkEventIndex;
+    const savedChunkIndex = this.chunkIndex;
+
     this.lastChunkEventIndex = this.events.length;
     this.chunkIndex++;
 
@@ -464,22 +491,30 @@ export class SessionRecorder {
         const result = await this.options.onChunkUpload(chunk);
         if (result.success) {
           this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
-          return;
+          return true;
         }
         if (!result.shouldRetry) {
           this.log(`Chunk ${chunk.chunkIndex} upload failed (no retry):`, result.error);
-          return;
+          this.lastChunkEventIndex = savedLastChunkEventIndex;
+          this.chunkIndex = savedChunkIndex;
+          return false;
         }
       } catch (error) {
         this.log(`Chunk ${chunk.chunkIndex} upload error (attempt ${retries + 1}):`, error);
         if (retries >= maxRetries) {
           this.emitError(error);
-          return;
+          this.lastChunkEventIndex = savedLastChunkEventIndex;
+          this.chunkIndex = savedChunkIndex;
+          return false;
         }
       }
       retries++;
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries - 1), 10000)));
     }
+
+    this.lastChunkEventIndex = savedLastChunkEventIndex;
+    this.chunkIndex = savedChunkIndex;
+    return false;
   }
 
   // ==================== rrweb 配置构建 ====================
@@ -684,6 +719,9 @@ export class SessionRecorder {
     // 清理定时器
     this.clearTimers();
 
+    // 阻止后续异步缓存写入 (H2 修复)
+    this.cacheStopped = true;
+
     // 停止路由追踪
     this.stopRouteTracking();
 
@@ -699,23 +737,34 @@ export class SessionRecorder {
     this.endTime = Date.now();
     this.setStatus('stopped');
 
+    let uploadSuccess = false;
+
     try {
-      // 删除 IndexedDB 缓存（数据已在内存中）
-      if (this.cacheManager) {
-        await this.cacheManager.delete(this.sessionId);
-      }
+      // 先上传，再删缓存：防止上传失败后缓存已被清除导致数据丢失
 
       // 如果启用了分段上传，上传最后一个分段
       if (this.options.chunkedUpload?.enabled && this.options.onChunkUpload) {
-        await this.uploadChunk(true);
+        const chunkOk = await this.uploadChunk(true);
+        uploadSuccess = chunkOk;
       }
 
       // 上传完整数据（仅在配置了 onUpload 时）
       if (this.options.onUpload && this.events.length > 0) {
-        await this.upload(this.endTime);
-        this.log('Stopped recording, upload complete');
-      } else {
+        const fullOk = await this.upload(this.endTime);
+        uploadSuccess = fullOk;
+        if (fullOk) {
+          this.log('Stopped recording, upload complete');
+        } else {
+          this.log('Stopped recording, upload failed, cache retained');
+        }
+      } else if (!this.options.onUpload) {
+        uploadSuccess = true; // 无 onUpload 配置时视为成功
         this.log('Stopped recording, data retained for export');
+      }
+
+      // 只有上传成功才删除缓存
+      if (uploadSuccess && this.cacheManager) {
+        await this.cacheManager.deleteSession(this.sessionId);
       }
     } catch (error) {
       this.log('Error during stop upload phase:', error);
@@ -756,10 +805,11 @@ export class SessionRecorder {
   }
 
   /**
-   * 上传录制数据
+   * 上传完整录制数据（走 FieldMapper + beforeUpload）
+   * @returns 上传是否成功
    */
-  private async upload(endTime: number): Promise<void> {
-    if (!this.options.onUpload) return;
+  private async upload(endTime: number): Promise<boolean> {
+    if (!this.options.onUpload) return false;
 
     const rawData: RawRecordingData = {
       sessionId: this.sessionId,
@@ -788,10 +838,9 @@ export class SessionRecorder {
     } catch (error) {
       this.log('Error in data preparation (fieldMapper/beforeUpload):', error);
       this.emitError(error);
-      return;
+      return false;
     }
 
-    // 上传（带重试，与 uploadChunk 模式一致）
     let retries = 0;
     const maxRetries = this.options.maxRetries ?? 3;
 
@@ -800,7 +849,7 @@ export class SessionRecorder {
         const result = await this.options.onUpload(serverData);
         if (result.success) {
           this.log('Upload successful');
-          return;
+          return true;
         }
         throw new Error(result.error || 'Upload failed');
       } catch (error) {
@@ -808,12 +857,14 @@ export class SessionRecorder {
         if (retries >= maxRetries) {
           this.log('Max retries reached, upload failed');
           this.emitError(error);
-          return;
+          return false;
         }
       }
       retries++;
       await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retries - 1) * 1000));
     }
+
+    return false;
   }
 
   /**
@@ -832,26 +883,29 @@ export class SessionRecorder {
   }
 
   /**
-   * 保存到缓存（跳过无新增事件的情况，避免无意义写入）
-   * 直接传引用给 IndexedDB，由浏览器做 structured clone（比 JS 数组展开高效）
+   * 增量保存到缓存（只写入新增事件）
+   * 使用 cacheChunkWriteIndex 作为单调递增索引，确保幂等性
    */
   private saveToCache(): void {
-    if (!this.cacheManager || this.events.length === 0) {
+    if (!this.cacheManager || this.events.length === 0 || this.cacheStopped) {
       return;
     }
 
-    // 无新增事件且 chunk 进度未变则跳过，避免无意义的 IndexedDB 写入
-    if (this.events.length === this.lastCachedEventCount
-        && this.chunkIndex === this.lastCachedChunkIndex) {
+    // 无新增事件则跳过
+    if (this.events.length === this.lastCachedEventIndex) {
       return;
     }
-    this.lastCachedEventCount = this.events.length;
-    this.lastCachedChunkIndex = this.chunkIndex;
 
-    this.cacheManager.save({
-      id: this.sessionId,
-      events: this.events,
-      tags: this.tags,
+    const newEvents = this.events.slice(this.lastCachedEventIndex);
+    const snapshotEventCount = this.events.length;
+    const writeIndex = this.cacheChunkWriteIndex++;
+
+    const chunk: CachedChunk = {
+      id: `${this.sessionId}_${writeIndex}`,
+      sessionId: this.sessionId,
+      cacheChunkIndex: writeIndex,
+      events: newEvents,
+      tags: [...this.tags],
       startTime: this.startTime,
       url: window.location.href,
       userAgent: navigator.userAgent,
@@ -863,48 +917,84 @@ export class SessionRecorder {
       updatedAt: Date.now(),
       lastChunkEventIndex: this.lastChunkEventIndex,
       chunkIndex: this.chunkIndex,
-    }).catch(() => {});
+    };
 
-    this.log('Saved to cache');
+    this.cacheManager.saveChunk(chunk).then(() => {
+      if (this.cacheStopped) return;
+      this.lastCachedEventIndex = snapshotEventCount;
+      this.log('Saved to cache (incremental)');
+    }).catch(() => {
+      if (this.cacheStopped) return;
+      this.cacheChunkWriteIndex--;
+      this.log('Failed to save cache chunk, will retry next interval');
+    });
   }
 
   /**
-   * 恢复缓存的录制
-   * 仅在配置了 onUpload 时才尝试上传，否则仅清理过期缓存
+   * 恢复缓存的录制（增量 chunk 架构）
+   * 将所有 session 的 chunk 合并后走 onUpload + FieldMapper 路径上传
    */
   private async recoverCachedRecordings(): Promise<void> {
     if (!this.cacheManager) return;
 
-    const cached = await this.cacheManager.getAll();
-    if (cached.length === 0) return;
+    const sessions = await this.cacheManager.getAllSessions();
+    if (sessions.length === 0) return;
 
     if (!this.options.onUpload) {
-      this.log(`Found ${cached.length} cached recordings, no onUpload configured, skipping recovery`);
+      this.log(`Found ${sessions.length} cached sessions, no onUpload configured, skipping recovery`);
       return;
     }
 
-    this.log(`Found ${cached.length} cached recordings, uploading...`);
+    this.log(`Found ${sessions.length} cached sessions, recovering...`);
 
-    for (const item of cached) {
+    for (const sessionId of sessions) {
       try {
-        const converted = this.cacheManager.toRawRecordingData(item);
-        const { lastChunkEventIndex, chunkIndex, ...rawFields } = converted;
-
-        const pendingEvents = lastChunkEventIndex > 0
-          ? converted.events.slice(lastChunkEventIndex)
-          : converted.events;
-
-        if (pendingEvents.length === 0) {
-          await this.cacheManager.delete(item.id);
-          this.log('Recovered cached recording (all chunks already uploaded):', item.id);
+        const chunks = await this.cacheManager.getSessionChunks(sessionId);
+        if (chunks.length === 0) {
+          await this.cacheManager.deleteSession(sessionId);
           continue;
         }
 
+        // 合并所有 chunk 的事件和标记
+        const allEvents: EventWithTime[] = [];
+        const allTags: TagInfo[] = [];
+        let startTime = chunks[0].startTime;
+        let latestUpdatedAt = 0;
+
+        // H3 修复：用 max 获取已上传事件截止索引
+        const lastChunkEventIndex = Math.max(...chunks.map(c => c.lastChunkEventIndex ?? 0));
+
+        for (const chunk of chunks) {
+          allEvents.push(...chunk.events);
+          allTags.push(...chunk.tags);
+          if (chunk.updatedAt > latestUpdatedAt) {
+            latestUpdatedAt = chunk.updatedAt;
+          }
+        }
+
+        // 只上传未通过分段上传的事件
+        const pendingEvents = lastChunkEventIndex > 0
+          ? allEvents.slice(lastChunkEventIndex)
+          : allEvents;
+
+        if (pendingEvents.length === 0) {
+          await this.cacheManager.deleteSession(sessionId);
+          this.log('Recovered cached session (all chunks already uploaded):', sessionId);
+          continue;
+        }
+
+        const firstChunk = chunks[0];
         const rawData: RawRecordingData = {
-          ...rawFields,
+          sessionId,
           events: pendingEvents,
-          endTime: item.updatedAt,
-          duration: item.updatedAt - item.startTime,
+          startTime,
+          endTime: latestUpdatedAt,
+          duration: latestUpdatedAt - startTime,
+          tags: allTags,
+          url: firstChunk.url,
+          userAgent: firstChunk.userAgent,
+          screenResolution: firstChunk.screenResolution,
+          viewport: firstChunk.viewport,
         };
 
         let serverData = this.fieldMapper.toServer(rawData);
@@ -914,12 +1004,12 @@ export class SessionRecorder {
 
         const result = await this.options.onUpload(serverData);
         if (result.success) {
-          await this.cacheManager.delete(item.id);
-          this.log('Recovered and uploaded cached recording:', item.id,
+          await this.cacheManager.deleteSession(sessionId);
+          this.log('Recovered and uploaded cached session:', sessionId,
             lastChunkEventIndex > 0 ? `(skipped ${lastChunkEventIndex} already-uploaded events)` : '');
         }
       } catch (error) {
-        this.log('Failed to recover cached recording:', error);
+        this.log('Failed to recover cached session:', error);
       }
     }
   }
@@ -1010,8 +1100,10 @@ export class SessionRecorder {
     this.scrollCount = 0;
     this.chunkIndex = 0;
     this.lastChunkEventIndex = 0;
-    this.lastCachedEventCount = 0;
-    this.lastCachedChunkIndex = 0;
+    this.uploadingChunk = false;
+    this.lastCachedEventIndex = 0;
+    this.cacheChunkWriteIndex = 0;
+    this.cacheStopped = false;
   }
 
   // ==================== 公开 API ====================

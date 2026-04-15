@@ -55,6 +55,7 @@ export type {
   SessionMetadata,
   RecordingSummary,
   RecordingChunk,
+  CachedChunk,
   RouteChange,
   UserIdentity,
 

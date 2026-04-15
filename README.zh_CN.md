@@ -269,6 +269,84 @@ const recorder = getRecorder({
 ```
 </details>
 
+## 上传配置指南
+
+1.x 版本有 **两个独立的上传回调**，各自承担不同职责：
+
+| 回调 | 触发时机 | 数据格式 | 字段映射 |
+|------|----------|----------|----------|
+| `onUpload` | 调用 `stop()` 时 | `Record<string, any>`（经 `FieldMapper` 转换） | `fieldMapping` + `beforeUpload` 生效 |
+| `onChunkUpload` | 录制中定时触发 | `RecordingChunk`（原始格式） | **不经过** `fieldMapping` 转换 |
+
+两个回调 **互不相通** —— `onUpload` 不会收到分段数据，`onChunkUpload` 不会经过 `fieldMapping` 转换。
+
+### 推荐使用模式
+
+<details>
+<summary><b>模式 A：停止后一次性上传（简单场景）</b></summary>
+
+适合短时间录制。`stop()` 时一次性上传全部数据。
+
+```typescript
+const recorder = getRecorder({
+  onUpload: async (data) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    return { success: true };
+  },
+  fieldMapping: [['sessionId', 'id'], ['events', 'content', JSON.stringify, JSON.parse]],
+});
+```
+</details>
+
+<details>
+<summary><b>模式 B：录制中分段上传（长录制场景）</b></summary>
+
+适合可能持续数分钟的录制。录制过程中按间隔分段上传数据。
+
+```typescript
+const recorder = getRecorder({
+  chunkedUpload: { enabled: true, interval: 60000 },
+  onChunkUpload: async (chunk) => {
+    await fetch('/api/recording-chunks', { method: 'POST', body: JSON.stringify(chunk) });
+    return { success: true };
+  },
+});
+```
+
+> 注意：`fieldMapping` 对 `onChunkUpload` **不生效**。如需转换 `RecordingChunk` 数据格式，请自行处理。
+</details>
+
+<details>
+<summary><b>模式 C：分段 + 停止兜底（最安全）</b></summary>
+
+同时使用两者 —— 录制中分段上传，停止时再做一次完整上传作为兜底。后端需要能处理两种数据格式。
+
+```typescript
+const recorder = getRecorder({
+  chunkedUpload: { enabled: true, interval: 60000 },
+  onChunkUpload: async (chunk) => {
+    await fetch('/api/recording-chunks', { method: 'POST', body: JSON.stringify(chunk) });
+    return { success: true };
+  },
+  onUpload: async (data) => {
+    await fetch('/api/recordings', { method: 'POST', body: JSON.stringify(data) });
+    return { success: true };
+  },
+  fieldMapping: [['sessionId', 'id']],
+});
+```
+</details>
+
+### 常见错误
+
+| 错误配置 | 问题 |
+|----------|------|
+| 配了 `onUpload` + `chunkedUpload.enabled: true` 但没配 `onChunkUpload` | 分段数据无处可去，只有最终的 `onUpload` 会触发 |
+| 配了 `onChunkUpload` 但 `chunkedUpload.enabled` 为 `false`/未设置 | `onChunkUpload` 永远不会被调用 |
+| 期望 `fieldMapping` 对 `onChunkUpload` 生效 | `fieldMapping` 仅对 `onUpload` 生效 |
+
+> **想要更简洁的 API？** 2.0 版本（beta）已将 `onUpload` 和 `onChunkUpload` 统一为单一的 `onUpload` 回调。可通过 `npm install sigillum-js@beta` 试用。
+
 ## 兼容性
 
 | 浏览器 | 版本 |
