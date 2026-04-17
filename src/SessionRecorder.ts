@@ -434,7 +434,15 @@ export class SessionRecorder {
     const interval = config.interval ?? 60000;
 
     this.chunkTimer = setInterval(() => {
-      this.uploadChunk(false).catch((err) => this.log('Chunk timer error:', err));
+      this.uploadChunk(false).then(success => {
+        if (!success && this.status === 'recording') {
+          setTimeout(() => {
+            if (this.status === 'recording') {
+              this.uploadChunk(false).catch(err => this.log('Chunk retry error:', err));
+            }
+          }, 5000);
+        }
+      }).catch((err) => this.log('Chunk timer error:', err));
     }, interval) as unknown as number;
 
     this.log('Chunked upload enabled, interval:', interval);
@@ -462,6 +470,7 @@ export class SessionRecorder {
   private async _doUploadChunk(isFinal: boolean): Promise<boolean> {
     if (!this.options.onChunkUpload) return false;
 
+    const snapshotEventCount = this.events.length;
     const newEvents = this.events.slice(this.lastChunkEventIndex);
     if (newEvents.length === 0 && !isFinal) return false;
 
@@ -477,12 +486,6 @@ export class SessionRecorder {
       metadata: this.chunkIndex === 0 ? (this.metadata || undefined) : undefined,
     };
 
-    const savedLastChunkEventIndex = this.lastChunkEventIndex;
-    const savedChunkIndex = this.chunkIndex;
-
-    this.lastChunkEventIndex = this.events.length;
-    this.chunkIndex++;
-
     const maxRetries = this.options.maxRetries ?? 3;
     let retries = 0;
 
@@ -490,21 +493,19 @@ export class SessionRecorder {
       try {
         const result = await this.options.onChunkUpload(chunk);
         if (result.success) {
+          this.lastChunkEventIndex = snapshotEventCount;
+          this.chunkIndex++;
           this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
           return true;
         }
         if (!result.shouldRetry) {
           this.log(`Chunk ${chunk.chunkIndex} upload failed (no retry):`, result.error);
-          this.lastChunkEventIndex = savedLastChunkEventIndex;
-          this.chunkIndex = savedChunkIndex;
           return false;
         }
       } catch (error) {
         this.log(`Chunk ${chunk.chunkIndex} upload error (attempt ${retries + 1}):`, error);
         if (retries >= maxRetries) {
           this.emitError(error);
-          this.lastChunkEventIndex = savedLastChunkEventIndex;
-          this.chunkIndex = savedChunkIndex;
           return false;
         }
       }
@@ -512,8 +513,6 @@ export class SessionRecorder {
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries - 1), 10000)));
     }
 
-    this.lastChunkEventIndex = savedLastChunkEventIndex;
-    this.chunkIndex = savedChunkIndex;
     return false;
   }
 
@@ -891,14 +890,18 @@ export class SessionRecorder {
       return;
     }
 
+    const startIndex = this.lastCachedEventIndex;
+
     // 无新增事件则跳过
-    if (this.events.length === this.lastCachedEventIndex) {
+    if (this.events.length === startIndex) {
       return;
     }
 
-    const newEvents = this.events.slice(this.lastCachedEventIndex);
-    const snapshotEventCount = this.events.length;
+    const newEvents = this.events.slice(startIndex);
     const writeIndex = this.cacheChunkWriteIndex++;
+
+    // 同步推进，防止下次 saveToCache 重复 slice 相同事件
+    this.lastCachedEventIndex = this.events.length;
 
     const chunk: CachedChunk = {
       id: `${this.sessionId}_${writeIndex}`,
@@ -921,11 +924,10 @@ export class SessionRecorder {
 
     this.cacheManager.saveChunk(chunk).then(() => {
       if (this.cacheStopped) return;
-      this.lastCachedEventIndex = snapshotEventCount;
       this.log('Saved to cache (incremental)');
     }).catch(() => {
       if (this.cacheStopped) return;
-      this.cacheChunkWriteIndex--;
+      this.lastCachedEventIndex = Math.min(this.lastCachedEventIndex, startIndex);
       this.log('Failed to save cache chunk, will retry next interval');
     });
   }

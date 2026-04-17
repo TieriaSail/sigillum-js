@@ -404,10 +404,23 @@ export class CacheManager {
       const all = await this.getAllInternal();
       if (all.length <= 1) return;
 
-      all.sort((a: any, b: any) => (a.updatedAt || 0) - (b.updatedAt || 0));
-      const deleteCount = Math.ceil(all.length / 2);
-      const toDelete = all.slice(0, deleteCount).map((item: any) => item.id);
-      await this.deleteBatch(toDelete);
+      // 按 session 分组，找出最旧的 session 整体删除（避免部分删导致 session 残缺）
+      const sessionUpdatedAt = new Map<string, number>();
+      for (const item of all) {
+        const sid = (item as any).sessionId || (item as any).id;
+        const existing = sessionUpdatedAt.get(sid) || 0;
+        if ((item as any).updatedAt > existing) sessionUpdatedAt.set(sid, (item as any).updatedAt);
+      }
+
+      const sorted = [...sessionUpdatedAt.entries()].sort((a, b) => a[1] - b[1]);
+      const sessionsToDelete = new Set(sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2))).map(s => s[0]));
+
+      const toDelete = all
+        .filter((item: any) => sessionsToDelete.has((item as any).sessionId || (item as any).id))
+        .map((item: any) => item.id);
+      if (toDelete.length > 0) {
+        await this.deleteBatch(toDelete);
+      }
     } catch {
       // navigator.storage.estimate 可能失败，静默处理
     }
