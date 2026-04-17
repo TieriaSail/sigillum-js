@@ -495,6 +495,8 @@ export interface RecordingChunk {
   summary: RecordingSummary;
   /** 会话元数据（只在第一个分段包含） */
   metadata?: SessionMetadata;
+  /** 是否为崩溃恢复上传（业务层可据此选择存储路径） */
+  isRecovery?: boolean;
 }
 
 // ==================== 录制状态 ====================

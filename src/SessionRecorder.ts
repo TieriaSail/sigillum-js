@@ -450,7 +450,15 @@ export class SessionRecorder {
     const interval = config.interval ?? 60000;
 
     this.chunkTimer = setInterval(() => {
-      this.uploadChunk(false).catch((err) => this.log('Chunk timer error:', err));
+      this.uploadChunk(false).then(success => {
+        if (!success && this.status === 'recording') {
+          setTimeout(() => {
+            if (this.status === 'recording') {
+              this.uploadChunk(false).catch(err => this.log('Chunk retry error:', err));
+            }
+          }, 5000);
+        }
+      }).catch((err) => this.log('Chunk timer error:', err));
     }, interval) as unknown as number;
 
     this.log('Chunked upload enabled, interval:', interval);
@@ -475,6 +483,7 @@ export class SessionRecorder {
   }
 
   private async _doUploadChunk(isFinal: boolean): Promise<boolean> {
+    const snapshotEventCount = this.events.length;
     const newEvents = this.events.slice(this.lastChunkEventIndex);
     if (newEvents.length === 0 && !isFinal) return true;
 
@@ -490,12 +499,6 @@ export class SessionRecorder {
       metadata: this.chunkIndex === 0 ? (this.metadata || undefined) : undefined,
     };
 
-    const prevLastChunkEventIndex = this.lastChunkEventIndex;
-    const prevChunkIndex = this.chunkIndex;
-
-    this.lastChunkEventIndex = this.events.length;
-    this.chunkIndex++;
-
     let processedChunk = chunk;
     if (this.options.beforeUpload) {
       try {
@@ -503,8 +506,6 @@ export class SessionRecorder {
       } catch (error) {
         this.log('Error in beforeUpload:', error);
         this.emitError(error);
-        this.lastChunkEventIndex = prevLastChunkEventIndex;
-        this.chunkIndex = prevChunkIndex;
         return false;
       }
     }
@@ -516,26 +517,26 @@ export class SessionRecorder {
       try {
         const result = await this.uploadFn!(processedChunk);
         if (result.success) {
+          this.lastChunkEventIndex = snapshotEventCount;
+          this.chunkIndex++;
           this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
           return true;
         }
         if (!result.shouldRetry) {
           this.log(`Chunk ${chunk.chunkIndex} upload failed (no retry):`, result.error);
-          break;
+          return false;
         }
       } catch (error) {
         this.log(`Chunk ${chunk.chunkIndex} upload error (attempt ${retries + 1}):`, error);
         if (retries >= maxRetries) {
           this.emitError(error);
-          break;
+          return false;
         }
       }
       retries++;
       await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, retries - 1), 10000)));
     }
 
-    this.lastChunkEventIndex = prevLastChunkEventIndex;
-    this.chunkIndex = prevChunkIndex;
     return false;
   }
 
@@ -832,11 +833,14 @@ export class SessionRecorder {
       return;
     }
 
-    const newEvents = this.events.slice(this.lastCachedEventIndex);
+    const startIndex = this.lastCachedEventIndex;
+    const newEvents = this.events.slice(startIndex);
     if (newEvents.length === 0) return;
 
     const cacheChunkIndex = this.cacheChunkWriteIndex++;
-    const snapshotEventCount = this.events.length;
+
+    // 同步推进，防止下次 saveToCache 重复 slice 相同事件
+    this.lastCachedEventIndex = this.events.length;
 
     this.cacheManager.saveChunk({
       sessionId: this.sessionId,
@@ -854,18 +858,17 @@ export class SessionRecorder {
       metadata: this.metadata || undefined,
     }).then(() => {
       if (this.cacheStopped) return;
-      this.lastCachedEventIndex = snapshotEventCount;
       this.log('Saved to cache (incremental)');
     }).catch(() => {
       if (this.cacheStopped) return;
-      this.cacheChunkWriteIndex--;
+      this.lastCachedEventIndex = Math.min(this.lastCachedEventIndex, startIndex);
       this.log('Failed to save cache chunk, will retry next interval');
     });
   }
 
   /**
    * 恢复缓存的录制
-   * 按 sessionId 分组，跳过已上传的 chunk，逐段走 uploadFn 上传
+   * 合并所有缓存 chunk → 按 timestamp+type 去重 → 跳过已上传部分 → 分段上传
    */
   private async recoverCachedRecordings(): Promise<void> {
     if (!this.cacheManager) return;
@@ -881,43 +884,81 @@ export class SessionRecorder {
     this.log(`Found ${sessions.length} cached sessions, recovering...`);
 
     for (const session of sessions) {
+      const sessionId = session.sessionId;
       try {
-        const chunks = await this.cacheManager.getSessionChunks(session.sessionId);
+        const chunks = await this.cacheManager.getSessionChunks(sessionId);
         if (chunks.length === 0) {
-          await this.cacheManager.deleteSession(session.sessionId);
+          await this.cacheManager.deleteSession(sessionId);
           continue;
         }
 
-        // 按 cacheChunkIndex 排序
         chunks.sort((a, b) => a.cacheChunkIndex - b.cacheChunkIndex);
+
+        const allEvents: EventWithTime[] = [];
+        const seen = new Set<string>();
+        const allTags: TagInfo[] = [];
+        const sessionStartTime = chunks[0].startTime;
+        let latestUpdatedAt = 0;
+        const firstChunk = chunks[0];
+
+        for (const cached of chunks) {
+          for (const event of cached.events) {
+            const key = `${event.timestamp}-${event.type}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              allEvents.push(event);
+            }
+          }
+          if (cached.tags) {
+            for (const tag of cached.tags) {
+              const tagKey = `${tag.timestamp}-${tag.name}`;
+              if (!seen.has(tagKey)) {
+                seen.add(tagKey);
+                allTags.push(tag);
+              }
+            }
+          }
+          if (cached.updatedAt > latestUpdatedAt) latestUpdatedAt = cached.updatedAt;
+        }
+        allEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+        const maxLastChunkIdx = Math.max(...chunks.map(c => c.lastChunkEventIndex ?? 0));
+        const pendingEvents = maxLastChunkIdx > 0 ? allEvents.slice(maxLastChunkIdx) : allEvents;
+
+        if (pendingEvents.length === 0) {
+          await this.cacheManager.deleteSession(sessionId);
+          this.log('Recovered session (all events already uploaded):', sessionId);
+          continue;
+        }
 
         const maxChunkIndex = Math.max(...chunks.map(c => c.chunkIndex ?? 0));
         let recoveryChunkIndex = maxChunkIndex;
+
+        const RECOVERY_CHUNK_SIZE = 5000;
         let allSuccess = true;
 
-        for (const cached of chunks) {
-          if (cached.events.length === 0) {
-            await this.cacheManager.deleteChunk(cached.id);
-            continue;
-          }
+        for (let i = 0; i < pendingEvents.length; i += RECOVERY_CHUNK_SIZE) {
+          const slice = pendingEvents.slice(i, i + RECOVERY_CHUNK_SIZE);
+          const isFinal = i + RECOVERY_CHUNK_SIZE >= pendingEvents.length;
 
           const chunk: RecordingChunk = {
-            sessionId: cached.sessionId,
+            sessionId,
             chunkIndex: recoveryChunkIndex,
-            isFinal: cached === chunks[chunks.length - 1],
-            events: cached.events,
-            startTime: cached.events[0]?.timestamp ?? cached.startTime,
-            endTime: cached.events[cached.events.length - 1]?.timestamp ?? cached.updatedAt,
-            tags: cached.tags || [],
+            isFinal,
+            events: slice,
+            startTime: slice[0]?.timestamp ?? sessionStartTime,
+            endTime: slice[slice.length - 1]?.timestamp ?? latestUpdatedAt,
+            tags: isFinal ? allTags : [],
             summary: {
-              totalEvents: cached.events.length,
+              totalEvents: slice.length,
               clickCount: 0, inputCount: 0, scrollCount: 0,
               routeChangeCount: 0, routeChanges: [],
-              tagCount: cached.tags?.length ?? 0,
-              duration: cached.updatedAt - cached.startTime,
-              visitedUrls: cached.url ? [cached.url] : [],
+              tagCount: allTags.length,
+              duration: latestUpdatedAt - sessionStartTime,
+              visitedUrls: firstChunk.url ? [firstChunk.url] : [],
             },
-            metadata: recoveryChunkIndex === 0 ? cached.metadata : undefined,
+            metadata: recoveryChunkIndex === 0 ? firstChunk.metadata : undefined,
+            isRecovery: true,
           };
 
           let processedChunk: RecordingChunk = chunk;
@@ -950,18 +991,18 @@ export class SessionRecorder {
           }
 
           if (success) {
-            await this.cacheManager.deleteChunk(cached.id);
             recoveryChunkIndex++;
-            this.log('Recovered chunk:', cached.id);
           } else {
             allSuccess = false;
-            this.log('Failed to recover chunk, will retry next time:', cached.id);
+            this.log('Failed to recover session, will retry next time:', sessionId);
             break;
           }
         }
 
         if (allSuccess) {
-          this.log('Fully recovered session:', session.sessionId);
+          await this.cacheManager.deleteSession(sessionId);
+          this.log('Fully recovered session:', sessionId,
+            `(${pendingEvents.length} events, skipped ${maxLastChunkIdx} already-uploaded)`);
         }
       } catch (error) {
         this.log('Failed to recover cached session:', error);
