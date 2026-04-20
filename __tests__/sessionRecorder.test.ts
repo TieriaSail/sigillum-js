@@ -1257,7 +1257,7 @@ describe('SessionRecorder', () => {
   });
 
   describe('页面卸载处理', () => {
-    it('uploadOnUnload 默认应注册 beforeunload 事件', () => {
+    it('uploadOnUnload 默认应注册 pagehide 事件', () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
       recorder = new SessionRecorder({
         ...defaultOptions,
@@ -1265,11 +1265,11 @@ describe('SessionRecorder', () => {
       });
       recorder.start();
 
-      expect(addSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
+      expect(addSpy).toHaveBeenCalledWith('pagehide', expect.any(Function));
       addSpy.mockRestore();
     });
 
-    it('uploadOnUnload: false 不应注册 beforeunload 事件', () => {
+    it('uploadOnUnload: false 不应注册 pagehide 事件', () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
       recorder = new SessionRecorder({
         ...defaultOptions,
@@ -1277,14 +1277,14 @@ describe('SessionRecorder', () => {
       });
       recorder.start();
 
-      const beforeUnloadCalls = addSpy.mock.calls.filter(
-        ([event]) => event === 'beforeunload'
+      const pagehideCalls = addSpy.mock.calls.filter(
+        ([event]) => event === 'pagehide'
       );
-      expect(beforeUnloadCalls).toHaveLength(0);
+      expect(pagehideCalls).toHaveLength(0);
       addSpy.mockRestore();
     });
 
-    it('stop 后应移除 beforeunload 事件', async () => {
+    it('stop 后应移除 pagehide 事件', async () => {
       const removeSpy = vi.spyOn(window, 'removeEventListener');
       recorder = new SessionRecorder({
         ...defaultOptions,
@@ -1293,7 +1293,7 @@ describe('SessionRecorder', () => {
       recorder.start();
       await recorder.stop();
 
-      expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
+      expect(removeSpy).toHaveBeenCalledWith('pagehide', expect.any(Function));
       removeSpy.mockRestore();
     });
   });
@@ -1477,7 +1477,7 @@ describe('SessionRecorder', () => {
       });
     });
 
-    it('配置 beaconUrl 时，beforeunload 应使用 sendBeacon', () => {
+    it('配置 beaconUrl 时，pagehide 应使用 sendBeacon', () => {
       const mockSendBeacon = vi.fn().mockReturnValue(true);
       Object.defineProperty(navigator, 'sendBeacon', {
         value: mockSendBeacon,
@@ -1493,7 +1493,7 @@ describe('SessionRecorder', () => {
       const emit = (record as any).mock.calls[0]?.[0]?.emit;
       emit({ type: 2, data: {}, timestamp: Date.now() });
 
-      window.dispatchEvent(new Event('beforeunload'));
+      window.dispatchEvent(new Event('pagehide'));
 
       expect(mockSendBeacon).toHaveBeenCalledWith(
         'https://example.com/beacon',
@@ -1519,7 +1519,7 @@ describe('SessionRecorder', () => {
       const emit = (record as any).mock.calls[0]?.[0]?.emit;
       emit({ type: 2, data: {}, timestamp: Date.now() });
 
-      window.dispatchEvent(new Event('beforeunload'));
+      window.dispatchEvent(new Event('pagehide'));
 
       expect(mockSendBeacon).toHaveBeenCalled();
 
@@ -1539,7 +1539,7 @@ describe('SessionRecorder', () => {
       const emit = (record as any).mock.calls[0]?.[0]?.emit;
       emit({ type: 2, data: {}, timestamp: Date.now() });
 
-      window.dispatchEvent(new Event('beforeunload'));
+      window.dispatchEvent(new Event('pagehide'));
 
       expect(mockSendBeacon).not.toHaveBeenCalled();
     });

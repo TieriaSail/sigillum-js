@@ -262,12 +262,42 @@ const recorder = getRecorder({
   },
 
   // Misc
-  uploadOnUnload: true,
+  uploadOnUnload: true,          // pagehide 时尝试上传/缓存（推荐保持开启）
+  saveOnVisibilityHidden: false, // 切后台时自动写缓存（移动端 WebView 建议开启）
   beaconUrl: '/api/beacon',
   debug: false,
 });
 ```
 </details>
+
+## Page Lifecycle & Data Safety
+
+sigillum-js uses modern browser lifecycle events to protect recording data:
+
+| Event | Config | Default | Behavior |
+|-------|--------|---------|----------|
+| `pagehide` | `uploadOnUnload` | `true` | Page is being unloaded (navigation away, tab close). Attempts `sendBeacon` upload if `beaconUrl` configured, otherwise saves to IndexedDB cache. **More reliable than `beforeunload` on mobile WebView and does not block bfcache.** |
+| `visibilitychange` → hidden | `saveOnVisibilityHidden` | `false` | Page goes to background (tab switch, app minimize, mobile home button). Saves current unsent events to IndexedDB cache immediately. |
+
+### Why `pagehide` instead of `beforeunload`?
+
+- Mobile WebView (iOS/Android) often **does not fire** `beforeunload` when the user swipes away or the OS kills the WebView.
+- `beforeunload` **prevents bfcache** (Back-Forward Cache), meaning users can't instantly go "back" to your page.
+- `pagehide` is fired reliably across all modern browsers and mobile WebViews, and is compatible with bfcache.
+
+### When to enable `saveOnVisibilityHidden`
+
+Enable this option if your users are on **mobile WebView** or **frequently switch tabs**, as it dramatically reduces the chance of losing recording data when the OS kills a background page:
+
+```typescript
+const recorder = getRecorder({
+  uploadOnUnload: true,
+  saveOnVisibilityHidden: true, // Recommended for mobile WebView apps
+  beaconUrl: '/api/beacon',
+});
+```
+
+> **Note**: `saveOnVisibilityHidden` only writes to local IndexedDB — it does NOT trigger network requests. The performance overhead is minimal.
 
 ## Upload Configuration Guide
 

@@ -463,6 +463,8 @@ export interface SessionRecorderOptions {
   maxRetries?: number;
   /** 页面卸载时尝试上传 @default true */
   uploadOnUnload?: boolean;
+  /** 页面切后台（visibilitychange → hidden）时自动写一次缓存 @default false */
+  saveOnVisibilityHidden?: boolean;
   /**
    * 页面卸载时使用 navigator.sendBeacon 发送数据的 URL
    * 仅在 sendBeacon 可用时生效；提供此配置后，卸载时会优先用 sendBeacon
