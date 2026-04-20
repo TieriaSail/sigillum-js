@@ -140,7 +140,8 @@ export class SessionRecorder {
 
   private cacheTimer: number | null = null;
   private maxDurationTimer: number | null = null;
-  private unloadHandler: (() => void) | null = null;
+  private unloadHandler: ((e: PageTransitionEvent) => void) | null = null;
+  private visibilityHandler: (() => void) | null = null;
 
   /** 是否因不兼容而禁用 */
   private disabled: boolean = false;
@@ -1029,7 +1030,7 @@ export class SessionRecorder {
   }
 
   /**
-   * 注册页面卸载处理
+   * 使用 pagehide 替代 beforeunload：移动端 WebView 更可靠，且不阻止 bfcache
    */
   private registerUnloadHandler(): void {
     this.unloadHandler = () => {
@@ -1050,7 +1051,7 @@ export class SessionRecorder {
             new Blob([payload], { type: 'application/json' }),
           );
           if (sent) {
-            this.log('Page unload, sent via sendBeacon');
+            this.log('Page hide, sent via sendBeacon');
             return;
           }
         } catch {
@@ -1059,10 +1060,20 @@ export class SessionRecorder {
       }
 
       this.saveToCache();
-      this.log('Page unload, saved to cache');
+      this.log('Page hide, saved to cache');
     };
 
-    window.addEventListener('beforeunload', this.unloadHandler);
+    window.addEventListener('pagehide', this.unloadHandler);
+
+    if (this.options.saveOnVisibilityHidden === true) {
+      this.visibilityHandler = () => {
+        if (document.visibilityState === 'hidden' && this.status === 'recording' && this.events.length > 0) {
+          this.saveToCache();
+          this.log('Visibility hidden, saved to cache');
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
   }
 
   /**
@@ -1070,8 +1081,12 @@ export class SessionRecorder {
    */
   private unregisterUnloadHandler(): void {
     if (this.unloadHandler) {
-      window.removeEventListener('beforeunload', this.unloadHandler);
+      window.removeEventListener('pagehide', this.unloadHandler);
       this.unloadHandler = null;
+    }
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
     }
   }
 

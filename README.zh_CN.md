@@ -270,12 +270,42 @@ const recorder = getRecorder({
   },
 
   // 其他
-  uploadOnUnload: true,
+  uploadOnUnload: true,          // pagehide 时尝试上传/缓存（推荐保持开启）
+  saveOnVisibilityHidden: false, // 切后台时自动写缓存（移动端 WebView 建议开启）
   beaconUrl: '/api/beacon',
   debug: false,
 });
 ```
 </details>
+
+## 页面生命周期与数据安全
+
+sigillum-js 使用现代浏览器生命周期事件来保护录制数据：
+
+| 事件 | 配置项 | 默认值 | 行为 |
+|------|--------|--------|------|
+| `pagehide` | `uploadOnUnload` | `true` | 页面即将卸载（导航离开、关闭标签页）。如配置了 `beaconUrl` 则尝试 `sendBeacon`，否则写入 IndexedDB 缓存。**比 `beforeunload` 在移动端 WebView 更可靠，且不阻止 bfcache。** |
+| `visibilitychange` → hidden | `saveOnVisibilityHidden` | `false` | 页面切到后台（切标签页、按 Home 键、App 最小化）。立即将当前未上传事件写入 IndexedDB 缓存。 |
+
+### 为什么用 `pagehide` 而不是 `beforeunload`？
+
+- 移动端 WebView（iOS/Android）用户划走或系统杀进程时，**往往不触发** `beforeunload`。
+- `beforeunload` 会**阻止 bfcache**（前进后退缓存），导致用户无法秒回页面。
+- `pagehide` 在所有现代浏览器和移动端 WebView 中都能可靠触发，且兼容 bfcache。
+
+### 何时启用 `saveOnVisibilityHidden`
+
+如果你的用户主要在**移动端 WebView** 或**频繁切换标签页**的场景下使用，建议开启此选项。它能大幅降低系统后台杀页面时丢失录制数据的风险：
+
+```typescript
+const recorder = getRecorder({
+  uploadOnUnload: true,
+  saveOnVisibilityHidden: true, // 移动端 WebView 应用推荐开启
+  beaconUrl: '/api/beacon',
+});
+```
+
+> **注意**：`saveOnVisibilityHidden` 仅写入本地 IndexedDB，**不会触发网络请求**，性能开销极小。
 
 ## 兼容性
 
