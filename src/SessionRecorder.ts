@@ -932,15 +932,32 @@ export class SessionRecorder {
           continue;
         }
 
+        // 恢复 chunk 需要自包含可独立回放：如果 pending 事件中缺少 FullSnapshot，
+        // 从全量缓存事件中找回原始 FullSnapshot + Meta 并 prepend 到头部
+        let recoveryEvents = pendingEvents;
+        if (maxLastChunkIdx > 0 && !pendingEvents.some(e => e.type === 2)) {
+          const fullSnapshot = allEvents.find(e => e.type === 2);
+          const metaEvent = allEvents.find(e => e.type === 4);
+          if (fullSnapshot) {
+            const baseTs = pendingEvents[0].timestamp;
+            const prefix: EventWithTime[] = [];
+            if (metaEvent) {
+              prefix.push({ ...metaEvent, timestamp: baseTs - 2 });
+            }
+            prefix.push({ ...fullSnapshot, timestamp: baseTs - 1 });
+            recoveryEvents = [...prefix, ...pendingEvents];
+          }
+        }
+
         const maxChunkIndex = Math.max(...chunks.map(c => c.chunkIndex ?? 0));
         let recoveryChunkIndex = maxChunkIndex;
 
         const RECOVERY_CHUNK_SIZE = 5000;
         let allSuccess = true;
 
-        for (let i = 0; i < pendingEvents.length; i += RECOVERY_CHUNK_SIZE) {
-          const slice = pendingEvents.slice(i, i + RECOVERY_CHUNK_SIZE);
-          const isFinal = i + RECOVERY_CHUNK_SIZE >= pendingEvents.length;
+        for (let i = 0; i < recoveryEvents.length; i += RECOVERY_CHUNK_SIZE) {
+          const slice = recoveryEvents.slice(i, i + RECOVERY_CHUNK_SIZE);
+          const isFinal = i + RECOVERY_CHUNK_SIZE >= recoveryEvents.length;
 
           const chunk: RecordingChunk = {
             sessionId,

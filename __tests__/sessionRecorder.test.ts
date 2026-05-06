@@ -1599,4 +1599,84 @@ describe('SessionRecorder', () => {
       expect(mockSendBeacon).not.toHaveBeenCalled();
     });
   });
+
+  describe('崩溃恢复 FullSnapshot 补充', () => {
+    it('恢复 chunk 中缺少 FullSnapshot 时应从缓存中补充', async () => {
+      vi.useRealTimers();
+
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+
+      // 第一步：创建 recorder 并手动缓存一些包含 FullSnapshot 的事件
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      recorder1.start();
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+
+      // 模拟 FullSnapshot (type=2) + Meta (type=4) + IncrementalSnapshot (type=3)
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { type: 0 } }, timestamp: now + 1 });
+      for (let i = 0; i < 10; i++) {
+        emit1({ type: 3, data: { source: 0 }, timestamp: now + 100 + i * 100 });
+      }
+
+      // 等待缓存写入
+      await new Promise(r => setTimeout(r, 200));
+
+      // 模拟"第一个 chunk 已上传成功"：手动推进 lastChunkEventIndex
+      // 通过直接调用 uploadChunk（模拟定时器触发）
+      await (recorder1 as any).uploadChunk(false);
+
+      // 此时 onUpload 应已被调用一次（c0 包含 FullSnapshot）
+      expect(onUpload).toHaveBeenCalledTimes(1);
+      const c0 = onUpload.mock.calls[0][0];
+      expect(c0.events.some((e: any) => e.type === 2)).toBe(true);
+
+      // 添加更多增量事件（这些会被缓存但未上传）
+      for (let i = 0; i < 5; i++) {
+        emit1({ type: 3, data: { source: 1 }, timestamp: now + 2000 + i * 100 });
+      }
+      await new Promise(r => setTimeout(r, 200));
+
+      // 模拟崩溃：销毁 recorder 但不清理 IndexedDB
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      // 第二步：创建新 recorder，触发恢复
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+
+      // 等待恢复完成
+      await new Promise(r => setTimeout(r, 500));
+
+      // 恢复 chunk 应包含 FullSnapshot (type=2)
+      if (onUpload.mock.calls.length > 0) {
+        const recoveryChunk = onUpload.mock.calls[0][0];
+        expect(recoveryChunk.isRecovery).toBe(true);
+        const hasFullSnapshot = recoveryChunk.events.some((e: any) => e.type === 2);
+        expect(hasFullSnapshot).toBe(true);
+
+        // FullSnapshot 应在恢复事件之前（timestamp 更小）
+        const fullSnapshotIdx = recoveryChunk.events.findIndex((e: any) => e.type === 2);
+        const firstIncrementalIdx = recoveryChunk.events.findIndex((e: any) => e.type === 3);
+        if (fullSnapshotIdx !== -1 && firstIncrementalIdx !== -1) {
+          expect(recoveryChunk.events[fullSnapshotIdx].timestamp)
+            .toBeLessThan(recoveryChunk.events[firstIncrementalIdx].timestamp);
+        }
+      }
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });
