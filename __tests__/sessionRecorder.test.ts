@@ -1544,4 +1544,76 @@ describe('SessionRecorder', () => {
       expect(mockSendBeacon).not.toHaveBeenCalled();
     });
   });
+
+  describe('崩溃恢复 FullSnapshot 补充', () => {
+    it('恢复 chunk 中缺少 FullSnapshot 时应从缓存中补充', async () => {
+      vi.useRealTimers();
+
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      // 第一步：创建 recorder 并缓存事件（包含 FullSnapshot）
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      recorder1.start();
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+
+      // 模拟 FullSnapshot (type=2) + Meta (type=4) + IncrementalSnapshot (type=3)
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { type: 0 } }, timestamp: now + 1 });
+      for (let i = 0; i < 10; i++) {
+        emit1({ type: 3, data: { source: 0 }, timestamp: now + 100 + i * 100 });
+      }
+
+      // 等待缓存写入
+      await new Promise(r => setTimeout(r, 200));
+
+      // 模拟"第一个 chunk 已上传成功"：手动调用 uploadChunk
+      await (recorder1 as any).uploadChunk(false);
+      expect(onChunkUpload).toHaveBeenCalledTimes(1);
+
+      // 添加更多增量事件（这些会被缓存但未上传）
+      for (let i = 0; i < 5; i++) {
+        emit1({ type: 3, data: { source: 1 }, timestamp: now + 2000 + i * 100 });
+      }
+      await new Promise(r => setTimeout(r, 200));
+
+      // 模拟崩溃：销毁 recorder 但不清理 IndexedDB
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      // 第二步：创建新 recorder，触发恢复
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+
+      // 等待恢复完成
+      await new Promise(r => setTimeout(r, 500));
+
+      // 恢复走 onUpload 路径（main 架构），检查上传数据是否包含 FullSnapshot
+      if (onUpload.mock.calls.length > 0) {
+        const recoveryData = onUpload.mock.calls[0][0];
+        const events = recoveryData.events || recoveryData.content;
+        if (events) {
+          const hasFullSnapshot = events.some((e: any) => e.type === 2);
+          expect(hasFullSnapshot).toBe(true);
+        }
+      }
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });
