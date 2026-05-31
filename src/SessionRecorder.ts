@@ -966,7 +966,7 @@ export class SessionRecorder {
             events: slice,
             startTime: slice[0]?.timestamp ?? sessionStartTime,
             endTime: slice[slice.length - 1]?.timestamp ?? latestUpdatedAt,
-            tags: isFinal ? allTags : [],
+            tags: allTags,
             summary: {
               totalEvents: slice.length,
               clickCount: 0, inputCount: 0, scrollCount: 0,
@@ -975,7 +975,7 @@ export class SessionRecorder {
               duration: latestUpdatedAt - sessionStartTime,
               visitedUrls: firstChunk.url ? [firstChunk.url] : [],
             },
-            metadata: recoveryChunkIndex === 0 ? firstChunk.metadata : undefined,
+            metadata: i === 0 ? firstChunk.metadata : undefined,
             isRecovery: true,
           };
 

@@ -1679,4 +1679,129 @@ describe('SessionRecorder', () => {
       vi.useFakeTimers();
     });
   });
+
+  describe('崩溃恢复 tags/metadata 语义对齐', () => {
+    it('单段恢复：tags 应为 allTags 且首段携带 metadata', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      recorder1.start();
+      recorder1.identify('user-123', { plan: 'pro' });
+      recorder1.addTag('articleCode', { code: 'A001' });
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { type: 0 } }, timestamp: now + 1 });
+      for (let i = 0; i < 10; i++) {
+        emit1({ type: 3, data: { source: 0 }, timestamp: now + 100 + i * 100 });
+      }
+      // 主动落盘（默认缓存间隔 5s，测试中直接触发）
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 200));
+
+      // 崩溃：未上传任何 chunk
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      expect(onUpload.mock.calls.length).toBeGreaterThan(0);
+      const chunk = onUpload.mock.calls[0][0];
+      expect(chunk.isRecovery).toBe(true);
+      // tags 应携带录制时的 tag
+      expect(chunk.tags.some((t: any) => t.name === 'articleCode')).toBe(true);
+      // 首段应携带 metadata（含 identify 写入的 user）
+      expect(chunk.metadata).toBeDefined();
+      expect(chunk.metadata.user?.userId).toBe('user-123');
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+
+    it('多段恢复：所有段 tags 一致，仅恢复首段携带 metadata', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      recorder1.start();
+      recorder1.identify('user-xyz');
+      recorder1.addTag('articleCode', { code: 'B002' });
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { type: 0 } }, timestamp: now + 1 });
+      for (let i = 0; i < 10; i++) {
+        emit1({ type: 3, data: { source: 0 }, timestamp: now + 100 + i });
+      }
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 100));
+
+      // 上传 chunk #0，使 chunkIndex 推进到 1（maxChunkIndex=1）
+      await (recorder1 as any).uploadChunk(false);
+      onUpload.mockClear();
+
+      // 缓存 >5000 个未上传事件，触发多段恢复
+      const base = now + 10000;
+      for (let i = 0; i < 5200; i++) {
+        emit1({ type: 3, data: { source: 1 }, timestamp: base + i });
+      }
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 300));
+
+      // 崩溃
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      await new Promise(r => setTimeout(r, 800));
+
+      const recoveryCalls = onUpload.mock.calls
+        .map(c => c[0])
+        .filter(c => c.isRecovery === true);
+
+      expect(recoveryCalls.length).toBeGreaterThanOrEqual(2);
+
+      // 所有恢复段的 tags 一致且非空
+      for (const chunk of recoveryCalls) {
+        expect(chunk.tags.some((t: any) => t.name === 'articleCode')).toBe(true);
+      }
+
+      // 仅恢复流首段（本地序号 0）携带 metadata
+      expect(recoveryCalls[0].metadata).toBeDefined();
+      for (let i = 1; i < recoveryCalls.length; i++) {
+        expect(recoveryCalls[i].metadata).toBeUndefined();
+      }
+
+      // chunkIndex 应从 maxChunkIndex(1) 起步
+      expect(recoveryCalls[0].chunkIndex).toBe(1);
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });
