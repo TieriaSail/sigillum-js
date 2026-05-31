@@ -1616,4 +1616,58 @@ describe('SessionRecorder', () => {
       vi.useFakeTimers();
     });
   });
+
+  describe('崩溃恢复 tags/metadata 还原', () => {
+    it('恢复上传应携带 allTags 与 metadata', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      recorder1.start();
+      recorder1.identify('user-123', { plan: 'pro' });
+      recorder1.addTag('articleCode', { code: 'A001' });
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { type: 0 } }, timestamp: now + 1 });
+      for (let i = 0; i < 10; i++) {
+        emit1({ type: 3, data: { source: 0 }, timestamp: now + 100 + i * 100 });
+      }
+      // 主动落盘（默认缓存间隔 5s，测试中直接触发）
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 200));
+
+      // 崩溃：未上传任何 chunk
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      expect(onUpload.mock.calls.length).toBeGreaterThan(0);
+      const serverData = onUpload.mock.calls[0][0];
+      // 默认 fieldMapping 透传 tags / metadata
+      expect(serverData.tags.some((t: any) => t.name === 'articleCode')).toBe(true);
+      expect(serverData.metadata).toBeDefined();
+      expect(serverData.metadata.user?.userId).toBe('user-123');
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });

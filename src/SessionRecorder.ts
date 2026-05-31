@@ -921,6 +921,7 @@ export class SessionRecorder {
       updatedAt: Date.now(),
       lastChunkEventIndex: this.lastChunkEventIndex,
       chunkIndex: this.chunkIndex,
+      metadata: this.metadata || undefined,
     };
 
     this.cacheManager.saveChunk(chunk).then(() => {
@@ -1004,6 +1005,8 @@ export class SessionRecorder {
         }
 
         const firstChunk = chunks[0];
+        // 从缓存还原 metadata（任意 chunk 都存了相同的会话级 metadata）
+        const recoveredMetadata = chunks.find(c => c.metadata)?.metadata;
         const rawData: RawRecordingData = {
           sessionId,
           events: recoveryEvents,
@@ -1015,6 +1018,7 @@ export class SessionRecorder {
           userAgent: firstChunk.userAgent,
           screenResolution: firstChunk.screenResolution,
           viewport: firstChunk.viewport,
+          metadata: recoveredMetadata,
         };
 
         let serverData = this.fieldMapper.toServer(rawData);

@@ -531,6 +531,8 @@ export interface CachedChunk {
   chunkIndex?: number;
   /** 已上传的事件截止索引 */
   lastChunkEventIndex?: number;
+  /** 会话元数据（崩溃恢复时用于还原 metadata） */
+  metadata?: SessionMetadata;
 }
 
 // ==================== 录制状态 ====================
