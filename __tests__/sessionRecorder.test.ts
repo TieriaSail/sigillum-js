@@ -1670,4 +1670,100 @@ describe('SessionRecorder', () => {
       vi.useFakeTimers();
     });
   });
+
+  describe('崩溃恢复 node id 空间自洽（防断链冻屏）', () => {
+    const computeMissRatio = (events: any[]) => {
+      const ids = new Set<number>();
+      const walk = (n: any) => {
+        if (!n) return;
+        if (typeof n.id === 'number') ids.add(n.id);
+        (n.childNodes || []).forEach(walk);
+      };
+      const fs = events.find(e => e.type === 2);
+      if (fs) walk(fs.data.node);
+      let total = 0, miss = 0;
+      for (const e of events) {
+        if (e.type === 3 && e.data?.source === 0) {
+          for (const a of (e.data.adds || [])) {
+            total++;
+            if (typeof a.parentId === 'number' && !ids.has(a.parentId)) miss++;
+            walk(a.node);
+          }
+        }
+      }
+      return total === 0 ? 0 : miss / total;
+    };
+
+    it('恢复上传应从最后一个 FullSnapshot 重建，使 Mutation parentId 可解析', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      recorder1.start();
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({
+        type: 2,
+        data: { node: { id: 1, childNodes: [{ id: 2, childNodes: [] }] } },
+        timestamp: now + 1,
+      });
+      // 中间增量 A：新建 node 100（稍后被 chunk#0 上传）
+      emit1({
+        type: 3,
+        data: { source: 0, adds: [{ parentId: 2, nextId: null, node: { id: 100, childNodes: [] } }] },
+        timestamp: now + 2,
+      });
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 100));
+
+      // 上传 chunk#0（含 A），推进 lastChunkEventIndex
+      await (recorder1 as any).uploadChunk(false);
+      onUpload.mockClear();
+
+      // 崩溃前增量 B：父节点 100 由 A 创建
+      emit1({
+        type: 3,
+        data: { source: 0, adds: [{ parentId: 100, nextId: null, node: { id: 200, childNodes: [] } }] },
+        timestamp: now + 3,
+      });
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 100));
+
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      expect(onUpload.mock.calls.length).toBeGreaterThan(0);
+      const recoveryData = onUpload.mock.calls[0][0];
+      const events = recoveryData.events || recoveryData.content;
+      expect(events.some((e: any) => e.type === 2)).toBe(true);
+      // 必须重新包含中间增量 A（创建 node 100）
+      const hasNode100 = events.some(
+        (e: any) => e.type === 3 && (e.data.adds || []).some((a: any) => a.node?.id === 100)
+      );
+      expect(hasNode100).toBe(true);
+      expect(computeMissRatio(events)).toBe(0);
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });

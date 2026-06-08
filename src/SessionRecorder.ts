@@ -987,20 +987,24 @@ export class SessionRecorder {
           continue;
         }
 
-        // 恢复 chunk 需要自包含可独立回放：如果 pending 事件中缺少 FullSnapshot，
-        // 从全量缓存事件中找回原始 FullSnapshot + Meta 并 prepend 到头部
+        // 恢复 chunk 必须以 FullSnapshot 开头且 node id 空间自洽：
+        // rrweb 的增量 Mutation 通过 parentId 引用 mirror 中已存在的节点，
+        // 仅 prepend 初始快照（只含起始节点）无法覆盖"已上传增量所创建的中间节点"，
+        // 会导致回放时大量 Mutation 找不到父节点而冻屏。
+        // 正确做法：从缓存中【最后一个】FullSnapshot 切到末尾（含其紧邻的 Meta），
+        // 这样 [快照 + 其后全部增量] 的 id 依赖链完整、可回放。
         let recoveryEvents = pendingEvents;
-        if (lastChunkEventIndex > 0 && !pendingEvents.some(e => e.type === 2)) {
-          const fullSnapshot = allEvents.find(e => e.type === 2);
-          const metaEvent = allEvents.find(e => e.type === 4);
-          if (fullSnapshot) {
-            const baseTs = pendingEvents[0].timestamp;
-            const prefix: EventWithTime[] = [];
-            if (metaEvent) {
-              prefix.push({ ...metaEvent, timestamp: baseTs - 2 });
-            }
-            prefix.push({ ...fullSnapshot, timestamp: baseTs - 1 });
-            recoveryEvents = [...prefix, ...pendingEvents];
+        const lastFullIdx = allEvents.map(e => e.type).lastIndexOf(2);
+        if (lastFullIdx >= 0) {
+          let startIdx = lastFullIdx;
+          if (startIdx > 0 && allEvents[startIdx - 1].type === 4) {
+            startIdx -= 1;
+          }
+          const candidate = allEvents.slice(startIdx);
+          if (this.recoveryStreamConsistent(candidate)) {
+            recoveryEvents = candidate;
+          } else {
+            this.log('Recovery snapshot id-space inconsistent, dropping snapshot prefix');
           }
         }
 
@@ -1030,12 +1034,55 @@ export class SessionRecorder {
         if (result.success) {
           await this.cacheManager.deleteSession(sessionId);
           this.log('Recovered and uploaded cached session:', sessionId,
-            lastChunkEventIndex > 0 ? `(skipped ${lastChunkEventIndex} already-uploaded events)` : '');
+            `(${recoveryEvents.length} events from last FullSnapshot)`);
         }
       } catch (error) {
         this.log('Failed to recover cached session:', error);
       }
     }
+  }
+
+  /**
+   * 递归收集 rrweb 序列化节点树上的所有 node id
+   */
+  private collectNodeIds(node: any, out: Set<number>): void {
+    if (!node) return;
+    if (typeof node.id === 'number') out.add(node.id);
+    const children = node.childNodes;
+    if (Array.isArray(children)) {
+      for (const child of children) this.collectNodeIds(child, out);
+    }
+  }
+
+  /**
+   * 校验恢复事件流的 node id 空间是否自洽：
+   * 以首个 FullSnapshot 的 id 集合为起点，按增量 add 逐步扩充，
+   * 统计 Mutation 引用的 parentId 命中率。命中率过低说明快照与增量不同源
+   * （如缓存断层），不应作为自包含 chunk 上传。
+   */
+  private recoveryStreamConsistent(events: EventWithTime[]): boolean {
+    const fullSnapshot = events.find(e => e.type === 2);
+    if (!fullSnapshot) return false;
+
+    const ids = new Set<number>();
+    this.collectNodeIds((fullSnapshot as any).data?.node, ids);
+
+    let total = 0;
+    let miss = 0;
+    for (const e of events) {
+      if (e.type === 3 && (e as any).data?.source === 0) {
+        const adds = (e as any).data.adds;
+        if (Array.isArray(adds)) {
+          for (const add of adds) {
+            total++;
+            if (typeof add.parentId === 'number' && !ids.has(add.parentId)) miss++;
+            this.collectNodeIds(add.node, ids);
+          }
+        }
+      }
+    }
+
+    return total === 0 || miss / total < 0.5;
   }
 
   /**
