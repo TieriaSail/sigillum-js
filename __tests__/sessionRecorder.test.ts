@@ -1804,4 +1804,102 @@ describe('SessionRecorder', () => {
       vi.useFakeTimers();
     });
   });
+
+  describe('崩溃恢复 node id 空间自洽（防断链冻屏）', () => {
+    // 计算事件流中 Mutation 的 parentId 在「快照 + 增量新建节点」中的缺失率
+    const computeMissRatio = (events: any[]) => {
+      const ids = new Set<number>();
+      const walk = (n: any) => {
+        if (!n) return;
+        if (typeof n.id === 'number') ids.add(n.id);
+        (n.childNodes || []).forEach(walk);
+      };
+      const fs = events.find(e => e.type === 2);
+      if (fs) walk(fs.data.node);
+      let total = 0, miss = 0;
+      for (const e of events) {
+        if (e.type === 3 && e.data?.source === 0) {
+          for (const a of (e.data.adds || [])) {
+            total++;
+            if (typeof a.parentId === 'number' && !ids.has(a.parentId)) miss++;
+            walk(a.node);
+          }
+        }
+      }
+      return total === 0 ? 0 : miss / total;
+    };
+
+    it('恢复段应从最后一个 FullSnapshot 重建，使 Mutation parentId 可解析', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      recorder1.start();
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+
+      // 起始：Meta + FullSnapshot（node id 1、2）
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({
+        type: 2,
+        data: { node: { id: 1, childNodes: [{ id: 2, childNodes: [] }] } },
+        timestamp: now + 1,
+      });
+      // 中间增量 A：在 node 2 下新建 node 100（这批稍后会被 chunk#0 上传）
+      emit1({
+        type: 3,
+        data: { source: 0, adds: [{ parentId: 2, nextId: null, node: { id: 100, childNodes: [] } }] },
+        timestamp: now + 2,
+      });
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 100));
+
+      // 上传 chunk#0（含 A），推进 lastChunkEventIndex —— 旧逻辑会把 A 从恢复段切掉
+      await (recorder1 as any).uploadChunk(false);
+      onUpload.mockClear();
+
+      // 崩溃前的增量 B：父节点 100 由 A 创建（不在初始快照里）
+      emit1({
+        type: 3,
+        data: { source: 0, adds: [{ parentId: 100, nextId: null, node: { id: 200, childNodes: [] } }] },
+        timestamp: now + 3,
+      });
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 100));
+
+      // 崩溃
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      const recoveryCall = onUpload.mock.calls.map(c => c[0]).find(c => c.isRecovery === true);
+      expect(recoveryCall).toBeDefined();
+
+      // 恢复段必须以 FullSnapshot 开头
+      expect(recoveryCall.events.some((e: any) => e.type === 2)).toBe(true);
+      // 必须重新包含中间增量 A（创建 node 100），否则 B 的 parentId=100 无法解析
+      const hasNode100 = recoveryCall.events.some(
+        (e: any) => e.type === 3 && (e.data.adds || []).some((a: any) => a.node?.id === 100)
+      );
+      expect(hasNode100).toBe(true);
+      // id 空间自洽：parentId 缺失率应为 0（修复前 B 的 parentId=100 会缺失 → 冻屏）
+      expect(computeMissRatio(recoveryCall.events)).toBe(0);
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
 });
