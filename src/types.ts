@@ -191,11 +191,8 @@ export interface PrivacyConfig {
   /**
    * CSS 选择器级别的屏蔽（更灵活）
    *
-   * @deprecated rrweb 2.0.0-alpha.4 存在 bug：当 DOM 中出现 characterData 类型的
-   * mutation（如文本节点内容变化）时，isBlocked() 会在 Text 节点上调用 node.matches()，
-   * 导致 TypeError 崩溃并静默中断后续所有录制。sigillum-js 已通过 patch-package 修复此问题，
-   * 但如果你单独安装了 rrweb，blockSelector 仍会触发此 bug。
-   * 推荐使用 blockClass 替代。
+   * 注：rrweb 2.0.0-alpha.4 中 blockSelector 在文本节点 mutation 时会崩溃，
+   * 该 bug 已在 rrweb 2.0.1（本版本依赖）中原生修复，可放心使用。
    * @see https://github.com/rrweb-io/rrweb/issues/1486
    * @default undefined
    */
@@ -352,9 +349,11 @@ export interface RrwebConfig {
    * rrweb 录制插件列表
    * 透传给 rrweb 的 plugins 选项，支持官方和自定义插件
    *
+   * 注意：rrweb 2.0 起插件已拆分为独立包，需单独安装对应插件包。
+   *
    * @example
    * ```ts
-   * import { getRecordConsolePlugin } from 'rrweb';
+   * import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
    * { plugins: [getRecordConsolePlugin()] }
    * ```
    */

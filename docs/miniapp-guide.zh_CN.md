@@ -407,9 +407,7 @@ getRecorder({
       },
 
       blockClass: 'sensitive-area',
-      // ⚠️ blockSelector 存在已知 bug，请使用 blockClass 替代。
-      // 详见：https://github.com/rrweb-io/rrweb/issues/1486
-      // blockSelector: '[data-private]',
+      blockSelector: '[data-private]', // rrweb 2.0.1 已修复，可放心使用（已内置）
       maskTextClass: 'mask-text',
       maskTextSelector: '.user-info',
 

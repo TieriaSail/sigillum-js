@@ -1,6 +1,6 @@
 {
   "name": "sigillum-js",
-  "version": "2.0.0-beta.9",
+  "version": "2.1.0-beta.1",
   "description": "Session recording for web and mini programs. Record user behavior, replay it, debug faster.",
   "keywords": [
     "session-replay",
@@ -80,7 +80,6 @@
   ],
   "homepage": "https://github.com/TieriaSail/sigillum-js#readme",
   "scripts": {
-    "postinstall": "test -d patches && patch-package || true",
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
@@ -90,8 +89,8 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "rrweb": "2.0.0-alpha.4",
-    "rrweb-player": "1.0.0-alpha.4"
+    "rrweb": "^2.0.1",
+    "rrweb-player": "^2.0.1"
   },
   "peerDependencies": {
     "@tarojs/runtime": ">=3.0.0",
@@ -126,7 +125,6 @@
     "@vitest/coverage-v8": "4.0.18",
     "fake-indexeddb": "6.2.5",
     "jsdom": "28.1.0",
-    "patch-package": "^8.0.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tsup": "8.5.1",

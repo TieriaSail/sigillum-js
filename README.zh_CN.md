@@ -16,6 +16,17 @@
 
 ---
 
+> [!IMPORTANT]
+> **自 `2.1.0-beta.1` 起，底层 rrweb 升级到正式版 `2.0.1`**（此前为 `2.0.0-alpha.4`），带来大量上游修复与改进：
+> - 修复 `blockSelector` 在 Text 节点变更时崩溃的问题——**`blockSelector` 现在可以放心使用**（此前的临时补丁已移除）。
+> - 修复全量快照阶段 `maskInputFn` 被忽略的隐私泄露问题。
+> - 更小的体积（移除冗余 mutation 数据、移除内联 worker），以及更稳健的音视频回放。
+>
+> **你需要注意：**
+> - sigillum-js 对外 API 未变——升级只需 `npm install sigillum-js@beta`，平滑无感。
+> - 如果你使用 rrweb **插件**，注意 rrweb 2.0 已将插件拆分为独立包。例如 console 插件从 `rrweb` 迁移到了 `@rrweb/rrweb-plugin-console-record`，请单独安装并更新导入路径。
+> - 升级后请在真实浏览器中冒烟测试一遍 **录制 → 上传 → 回放**。
+
 ## 它做什么
 
 录制完整的用户会话，让你可以回放用户的每一步操作。数据自管理。
@@ -259,11 +270,8 @@ const recorder = getRecorder({
   // 隐私（遮盖输入、屏蔽元素等）
   rrwebConfig: {
     privacy: {
-      // ⚠️ 请使用 blockClass 代替 blockSelector。
-      // blockSelector 在 rrweb 2.0.0-alpha.4 中存在 bug，当 Text 节点内容
-      // 变化时会导致录制静默中断。详见：
-      // https://github.com/rrweb-io/rrweb/issues/1486
       blockClass: 'rr-block',
+      blockSelector: '.sensitive', // rrweb 2.0.1 已修复（本 beta 已内置）
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',

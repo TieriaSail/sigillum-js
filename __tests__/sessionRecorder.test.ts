@@ -524,7 +524,7 @@ describe('SessionRecorder', () => {
       expect(recordCall.ignoreClass).toBe('no-record');
     });
 
-    it('使用 blockSelector 时应输出控制台警告', () => {
+    it('使用 blockSelector 时不应输出过时的崩溃警告（rrweb 2.0.1 已修复）', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       recorder = new SessionRecorder({
@@ -538,12 +538,10 @@ describe('SessionRecorder', () => {
 
       recorder.start();
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('blockSelector has a known bug')
+      const blockSelectorWarnings = warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('blockSelector')
       );
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('rrweb-io/rrweb/issues/1486')
-      );
+      expect(blockSelectorWarnings).toHaveLength(0);
 
       warnSpy.mockRestore();
     });
