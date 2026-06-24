@@ -265,9 +265,16 @@ const recorder = getRecorder({
     privacy: {
       blockClass: 'rr-block',
       blockSelector: '.sensitive', // Fixed in rrweb 2.0.1 (sigillum-js >= 1.6.0)
+      ignoreClass: 'rr-ignore',
+      ignoreSelector: '[data-ignore]', // CSS-selector form of ignoreClass (rrweb 2.0+)
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',
+    dataURLOptions: { type: 'image/webp', quality: 0.6 }, // smaller canvas snapshots (rrweb 2.0+)
+    recordAfter: 'load',          // start recording after a lifecycle event (rrweb 2.0+)
+    // errorHandler is auto-installed: rrweb internal errors are forwarded to onError.
+    // Provide your own to override:
+    // errorHandler: (err) => { report(err); return true; },
   },
 
   // Misc
@@ -403,6 +410,13 @@ const recorder = getRecorder({
 | **Vue** | 3.0+ | `sigillum-js/vue` |
 | **Next.js** | 12+ | Via React integration |
 | **Nuxt** | 3+ | Via Vue integration |
+
+## Roadmap
+
+Ideas enabled by the rrweb 2.0 upgrade, planned for a future release:
+
+- **Asset capture for images/fonts.** rrweb 2.0 deprecates `inlineImages` / `inlineStylesheet` in favor of a dedicated asset-capture pipeline (a separate `Asset` event type). Adopting it would keep replay fidelity while pulling large binary assets out of the main event stream — meaningfully reducing chunked-upload payload size.
+- **Built-in payload compression via `@rrweb/packer`.** rrweb's pack/unpack is now a standalone package. You can already wire it through `rrwebConfig.packFn` (record) + `ReplayPlayer` `unpackFn` (replay); we plan to document a recommended setup and consider a first-class toggle.
 
 ## Also Check Out
 

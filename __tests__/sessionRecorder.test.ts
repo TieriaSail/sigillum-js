@@ -719,6 +719,97 @@ describe('SessionRecorder', () => {
       expect(recordCall.maskAllInputs).toBeFalsy();
       expect(recordCall.ignoreClass).toBe('rr-ignore');
     });
+
+    it('ignoreSelector 应透传给 rrweb', () => {
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: { privacy: { ignoreSelector: '[data-ignore]' } },
+      });
+      recorder.start();
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(recordCall.ignoreSelector).toBe('[data-ignore]');
+    });
+
+    it('dataURLOptions 应透传给 rrweb', () => {
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: { dataURLOptions: { type: 'image/webp', quality: 0.6 } },
+      });
+      recorder.start();
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(recordCall.dataURLOptions).toEqual({ type: 'image/webp', quality: 0.6 });
+    });
+
+    it('recordAfter 应透传给 rrweb', () => {
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: { recordAfter: 'load' },
+      });
+      recorder.start();
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(recordCall.recordAfter).toBe('load');
+    });
+
+    it('keepIframeSrcFn 应透传给 rrweb', () => {
+      const fn = (src: string) => src.startsWith('https://trusted');
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: { keepIframeSrcFn: fn },
+      });
+      recorder.start();
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(recordCall.keepIframeSrcFn).toBe(fn);
+    });
+
+    it('默认应安装 errorHandler 并把 rrweb 内部错误转发到 onError', () => {
+      const onError = vi.fn();
+      recorder = new SessionRecorder({ ...defaultOptions, onError });
+      recorder.start();
+
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(typeof recordCall.errorHandler).toBe('function');
+
+      const boom = new Error('rrweb internal boom');
+      const handled = recordCall.errorHandler(boom);
+      expect(handled).toBe(true); // 吞掉异常以保持录制
+      expect(onError).toHaveBeenCalledWith(boom);
+    });
+
+    it('用户自定义 errorHandler 应覆盖默认行为', () => {
+      const custom = vi.fn();
+      recorder = new SessionRecorder({
+        ...defaultOptions,
+        rrwebConfig: { errorHandler: custom },
+      });
+      recorder.start();
+      const recordCall = (record as any).mock.calls[0][0];
+      expect(recordCall.errorHandler).toBe(custom);
+    });
+  });
+
+  describe('行为统计 (pointerType / selection)', () => {
+    it('应区分触屏点击并统计文本选择次数', () => {
+      recorder = new SessionRecorder(defaultOptions);
+      recorder.start();
+
+      const emit = (record as any).mock.calls[(record as any).mock.calls.length - 1][0].emit;
+      const now = Date.now();
+      // rrweb 以数字枚举发出 pointerType：Mouse=0, Pen=1, Touch=2
+      // 鼠标点击
+      emit({ type: 3, data: { source: 2, type: 2, pointerType: 0 }, timestamp: now });
+      // 触屏点击
+      emit({ type: 3, data: { source: 2, type: 2, pointerType: 2 }, timestamp: now + 1 });
+      // 触屏双击
+      emit({ type: 3, data: { source: 2, type: 4, pointerType: 2 }, timestamp: now + 2 });
+      // 文本选择
+      emit({ type: 3, data: { source: 14 }, timestamp: now + 3 });
+      emit({ type: 3, data: { source: 14 }, timestamp: now + 4 });
+
+      const summary = recorder.getSummary()!;
+      expect(summary.clickCount).toBe(3);
+      expect(summary.touchClickCount).toBe(2);
+      expect(summary.selectionCount).toBe(2);
+    });
   });
 
   describe('destroy', () => {

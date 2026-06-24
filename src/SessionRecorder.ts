@@ -121,6 +121,13 @@ const MOUSE_INTERACTION = {
   TouchCancel: 10,
 } as const;
 
+// PointerType（rrweb 以数字枚举发出，非字符串）
+const POINTER_TYPE = {
+  Mouse: 0,
+  Pen: 1,
+  Touch: 2,
+} as const;
+
 /**
  * SessionRecorder 类
  */
@@ -159,8 +166,10 @@ export class SessionRecorder {
 
   // ========== 行为统计 ==========
   private clickCount: number = 0;
+  private touchClickCount: number = 0;
   private inputCount: number = 0;
   private scrollCount: number = 0;
+  private selectionCount: number = 0;
 
   // ========== 分段上传 ==========
   private chunkTimer: number | null = null;
@@ -384,6 +393,10 @@ export class SessionRecorder {
           event.data?.type === MOUSE_INTERACTION.DblClick
         ) {
           this.clickCount++;
+          // rrweb 2.0+ 在交互事件上附带 pointerType（数字枚举：Mouse=0/Pen=1/Touch=2）
+          if (event.data?.pointerType === POINTER_TYPE.Touch) {
+            this.touchClickCount++;
+          }
         }
         break;
       case INCREMENTAL_SOURCE.Input:
@@ -391,6 +404,9 @@ export class SessionRecorder {
         break;
       case INCREMENTAL_SOURCE.Scroll:
         this.scrollCount++;
+        break;
+      case INCREMENTAL_SOURCE.Selection:
+        this.selectionCount++;
         break;
     }
   }
@@ -409,6 +425,8 @@ export class SessionRecorder {
     return {
       totalEvents: this.events.length,
       clickCount: this.clickCount,
+      touchClickCount: this.touchClickCount,
+      selectionCount: this.selectionCount,
       inputCount: this.inputCount,
       scrollCount: this.scrollCount,
       routeChangeCount: this.routeChanges.length,
@@ -576,6 +594,7 @@ export class SessionRecorder {
       maskInputOptions: privacy.maskInputOptions || { password: true },
       maskInputFn: privacy.maskInputFn,
       ignoreClass: privacy.ignoreClass || 'rr-ignore',
+      ignoreSelector: privacy.ignoreSelector,
 
       // ========== DOM 精简 ==========
       slimDOMOptions: rrwebConfig.slimDOMOptions,
@@ -587,12 +606,25 @@ export class SessionRecorder {
 
       // ========== iframe ==========
       recordCrossOriginIframes: rrwebConfig.recordCrossOriginIframes || false,
+      keepIframeSrcFn: rrwebConfig.keepIframeSrcFn,
 
       // ========== 数据压缩 ==========
       packFn: rrwebConfig.packFn,
 
       // ========== 插件 ==========
       plugins: rrwebConfig.plugins,
+
+      // ========== canvas 快照导出 ==========
+      dataURLOptions: rrwebConfig.dataURLOptions,
+
+      // ========== 录制时机 ==========
+      recordAfter: rrwebConfig.recordAfter,
+
+      // ========== 错误处理（默认转发到 onError，避免静默崩溃）==========
+      errorHandler: rrwebConfig.errorHandler ?? ((error: unknown) => {
+        this.emitError(error);
+        return true;
+      }),
 
       // ========== 其他 ==========
       userTriggeredOnInput: rrwebConfig.userTriggeredOnInput || false,
@@ -1170,8 +1202,10 @@ export class SessionRecorder {
     this.routeChanges = [];
     this.currentUrl = '';
     this.clickCount = 0;
+    this.touchClickCount = 0;
     this.inputCount = 0;
     this.scrollCount = 0;
+    this.selectionCount = 0;
     this.chunkIndex = 0;
     this.lastChunkEventIndex = 0;
     this.uploadingChunk = false;
