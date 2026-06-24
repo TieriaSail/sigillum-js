@@ -101,12 +101,16 @@ export interface SessionMetadata {
 export interface RecordingSummary {
   /** 总事件数 */
   totalEvents: number;
-  /** 鼠标点击次数 */
+  /** 点击次数（含鼠标与触屏） */
   clickCount: number;
+  /** 其中通过触屏触发的点击次数（pointerType === 'touch'，rrweb 2.0+） */
+  touchClickCount: number;
   /** 输入次数 */
   inputCount: number;
   /** 滚动次数 */
   scrollCount: number;
+  /** 文本选择次数（rrweb 2.0+） */
+  selectionCount: number;
   /** 路由跳转次数 */
   routeChangeCount: number;
   /** 路由变化历史 */
@@ -242,6 +246,12 @@ export interface PrivacyConfig {
 
   /** 需要忽略的 class（不录制该元素的交互，但录制 DOM）@default 'rr-ignore' */
   ignoreClass?: string;
+  /**
+   * 需要忽略的 CSS 选择器（ignoreClass 的选择器版，更灵活）
+   * 不录制匹配元素的输入/交互，但仍录制其 DOM。
+   * @default undefined
+   */
+  ignoreSelector?: string;
 }
 
 /**
@@ -358,6 +368,50 @@ export interface RrwebConfig {
    * ```
    */
   plugins?: RrwebRecordPlugin[];
+
+  // ========== 画布快照 ==========
+
+  /**
+   * canvas 快照的图片导出选项（rrweb 2.0+）
+   * 可用更高压缩比的格式（如 webp）显著减小 canvas 录制体积。
+   * @example { type: 'image/webp', quality: 0.6 }
+   * @default undefined（rrweb 默认 image/png）
+   */
+  dataURLOptions?: {
+    type?: string;
+    quality?: number;
+  };
+
+  // ========== 录制时机 ==========
+
+  /**
+   * 录制启动时机（rrweb 2.0+）
+   * 在指定的页面生命周期事件后再开始录制，适合 SSR/SPA 等待首屏就绪的场景。
+   * @default 立即开始
+   */
+  recordAfter?: 'DOMContentLoaded' | 'load';
+
+  // ========== iframe ==========
+
+  /**
+   * 决定某个 iframe 是否保留其 src（返回 true 则保留 src 而非内联其内容）（rrweb 2.0+）
+   * @default undefined
+   */
+  keepIframeSrcFn?: (src: string) => boolean;
+
+  // ========== 错误处理 ==========
+
+  /**
+   * rrweb 录制级错误处理钩子（rrweb 2.0+）
+   * 捕获 rrweb 内部 observer 抛出的异常，避免单点错误静默中断整段录制。
+   * 返回 true 表示已处理（rrweb 不再向上抛出）。
+   *
+   * 注意：即使不配置，sigillum-js 也会默认安装一个 errorHandler，
+   * 把 rrweb 内部错误转发到 SessionRecorder 的 onError 回调（便于线上监控）。
+   * 配置此项会覆盖默认行为。
+   * @default 转发到 onError 并吞掉异常以保持录制
+   */
+  errorHandler?: (error: unknown) => void | boolean;
 
   // ========== 其他 ==========
 

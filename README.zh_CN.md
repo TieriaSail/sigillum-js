@@ -272,9 +272,16 @@ const recorder = getRecorder({
     privacy: {
       blockClass: 'rr-block',
       blockSelector: '.sensitive', // rrweb 2.0.1 已修复（本 beta 已内置）
+      ignoreClass: 'rr-ignore',
+      ignoreSelector: '[data-ignore]', // ignoreClass 的选择器版（rrweb 2.0+）
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',
+    dataURLOptions: { type: 'image/webp', quality: 0.6 }, // 更小的 canvas 快照（rrweb 2.0+）
+    recordAfter: 'load',          // 在指定生命周期事件后再开始录制（rrweb 2.0+）
+    // errorHandler 默认已自动安装：rrweb 内部错误会转发到 onError。
+    // 如需覆盖：
+    // errorHandler: (err) => { report(err); return true; },
   },
 
   // 其他
@@ -353,6 +360,13 @@ v2.0 为小程序环境（rrweb 无法工作）提供语义化用户行为追踪
 - **统一录制协议** — `SigillumRecording` 信封格式，自动识别 Web / 小程序数据来源
 
 > 详见[小程序集成指南](./docs/miniapp-guide.zh_CN.md)。
+
+## 路线图
+
+由 rrweb 2.0 升级带来、计划在后续版本落地的方向：
+
+- **图片/字体资源捕获（Asset capture）。** rrweb 2.0 将 `inlineImages` / `inlineStylesheet` 标记为 deprecated，转向独立的资源捕获管线（独立的 `Asset` 事件类型）。跟进后可在保持回放保真的同时，把大体积二进制资源从主事件流中拆出，**显著减小分段上传体积**。
+- **内置压缩（`@rrweb/packer`）。** rrweb 的 pack/unpack 已拆为独立包。目前已可通过 `rrwebConfig.packFn`（录制）+ `ReplayPlayer` 的 `unpackFn`（回放）接入；后续计划补充推荐用法文档，并考虑提供一等开关。
 
 ## 推荐搭配
 
