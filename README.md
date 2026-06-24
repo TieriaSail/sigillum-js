@@ -16,6 +16,18 @@
 
 ---
 
+> [!IMPORTANT]
+> **v1.6.0 upgrades the underlying rrweb to the stable `2.0.1` release** (previously `2.0.0-alpha.4`).
+> This brings many upstream bug fixes and improvements:
+> - Fixes the `blockSelector` crash on Text-node mutations — **`blockSelector` is now safe to use** (the previous workaround patch has been removed).
+> - Fixes `maskInputFn` being ignored during full snapshots (a privacy leak).
+> - Smaller payloads (redundant mutation data dropped, inlined worker removed) and more robust audio/video replay.
+>
+> **Action required:**
+> - The public sigillum-js API is unchanged — for most users upgrading is a drop-in `npm update`.
+> - If you use rrweb **plugins**, note that rrweb 2.0 split them into separate packages. For example, the console plugin moved from `rrweb` to `@rrweb/rrweb-plugin-console-record` — install it and update your import.
+> - After upgrading, please smoke-test **record → upload → replay** in a real browser once.
+
 ## What it does
 
 Records the entire user session so you can replay every step of user behavior. Data stays on your own servers.
@@ -251,11 +263,8 @@ const recorder = getRecorder({
   // Privacy (mask inputs, block elements, etc.)
   rrwebConfig: {
     privacy: {
-      // ⚠️ Use blockClass instead of blockSelector.
-      // blockSelector has a known bug in rrweb 2.0.0-alpha.4 that silently
-      // breaks recording when Text nodes change. See:
-      // https://github.com/rrweb-io/rrweb/issues/1486
       blockClass: 'rr-block',
+      blockSelector: '.sensitive', // Fixed in rrweb 2.0.1 (sigillum-js >= 1.6.0)
       maskAllInputs: true,
     },
     slimDOMOptions: 'all',
