@@ -1,6 +1,6 @@
 {
   "name": "sigillum-js",
-  "version": "2.1.0-beta.2",
+  "version": "2.1.0-beta.3",
   "description": "Session recording for web and mini programs. Record user behavior, replay it, debug faster.",
   "keywords": [
     "session-replay",
@@ -89,8 +89,7 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "rrweb": "^2.0.1",
-    "rrweb-player": "^2.0.1"
+    "rrweb": "^2.0.1"
   },
   "peerDependencies": {
     "@tarojs/runtime": ">=3.0.0",

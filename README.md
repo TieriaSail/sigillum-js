@@ -166,6 +166,10 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 <ReplayPage data={recordingData} showInfo={true} />
 ```
 
+> **No CSS import required.** The player drives the **rrweb core `Replayer`** directly (with a built-in lightweight controller: play/pause, draggable progress, time, speed) and auto-injects the small replay stylesheet. You don't need to install `rrweb-player` or import any `*.css`.
+>
+> Why not `rrweb-player`? Its published `2.0.0`/`2.0.1` builds are broken (the Replayer is never instantiated → blank replay, see [rrweb-io/rrweb#1872](https://github.com/rrweb-io/rrweb/issues/1872)), so sigillum-js no longer depends on it.
+
 <details>
 <summary><b>Replay Config</b></summary>
 
@@ -198,7 +202,7 @@ Pass `config` to customize replay behavior. Common rrweb Replayer options are av
 />
 ```
 
-> **Note**: `events`, `width`, and `height` are managed internally and cannot be overridden via `config` or `replayerConfig`.
+> **Note**: `events` and the replay mount point (`root`) are managed internally and cannot be overridden via `config` or `replayerConfig`. The player automatically scales the replay to fit its container, so you don't set a fixed `width`/`height` — just size the wrapper element.
 
 </details>
 

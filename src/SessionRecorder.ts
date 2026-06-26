@@ -1372,7 +1372,7 @@ export class SessionRecorder {
   /**
    * 导出录制数据
    * 仅在 stopped 状态下可用，返回完整的录制数据副本
-   * 数据包含事件流、元数据、行为摘要等，可直接用于 rrweb-player 回放
+   * 数据包含事件流、元数据、行为摘要等，可直接用于 rrweb 回放
    */
   exportRecording(): SigillumRecording<RawRecordingData> | null {
     if (this.status !== 'stopped') {
