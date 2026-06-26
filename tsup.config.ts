@@ -12,7 +12,7 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   clean: true,
-  external: ['react', 'react-dom', 'vue', 'rrweb', 'rrweb-player'],
+  external: ['react', 'react-dom', 'vue', 'rrweb'],
   treeshake: true,
   minify: false,
   target: 'es2020',

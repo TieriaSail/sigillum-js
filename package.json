@@ -1,6 +1,6 @@
 {
   "name": "sigillum-js",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "A session recording library for user behavior replay and bug reproduction",
   "keywords": [
     "session-replay",
@@ -70,8 +70,7 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "rrweb": "^2.0.1",
-    "rrweb-player": "^2.0.1"
+    "rrweb": "^2.0.1"
   },
   "peerDependencies": {
     "react": ">=16.8.0",

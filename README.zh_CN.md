@@ -160,6 +160,10 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 <ReplayPage data={recordingData} showInfo={true} />
 ```
 
+> **无需引入任何 CSS。** 播放器直接驱动 **rrweb 核心 `Replayer`**（自带轻量控制条：播放/暂停、可拖拽进度、时间、倍速），并自动注入回放所需的少量样式。你无需安装 `rrweb-player`，也无需 import 任何 `*.css`。
+>
+> 为什么不用 `rrweb-player`？它发布的 `2.0.0`/`2.0.1` 产物存在缺陷（Replayer 从未实例化 → 回放白屏，见 [rrweb-io/rrweb#1872](https://github.com/rrweb-io/rrweb/issues/1872)），因此 sigillum-js 已不再依赖它。
+
 <details>
 <summary><b>回放配置</b></summary>
 
@@ -192,7 +196,7 @@ import { ReplayPlayer, ReplayPage } from 'sigillum-js/ui';
 />
 ```
 
-> **注意**：`events`、`width`、`height` 由组件内部管理，不可通过 `config` 或 `replayerConfig` 覆盖。
+> **注意**：`events` 与回放挂载点（`root`）由组件内部管理，不可通过 `config` 或 `replayerConfig` 覆盖。播放器会自动等比缩放回放画面以适配容器，因此无需设置固定 `width`/`height`，只要给外层容器设定尺寸即可。
 
 </details>
 
