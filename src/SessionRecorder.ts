@@ -175,8 +175,15 @@ export class SessionRecorder {
   private chunkTimer: number | null = null;
   private uploadingChunk: boolean = false;
   private chunkIndex: number = 0;
+  // 下列 *Index 均为「累积绝对下标」（相对会话第一个事件），不受内存裁剪影响。
+  // 内存中的 this.events 是一个从 eventBaseOffset 开始的滑动窗口：
+  //   RAM 下标 = 绝对下标 - eventBaseOffset
   private lastChunkEventIndex: number = 0;
   private lastCachedEventIndex: number = 0;
+  /** 已确认写入 IndexedDB 的绝对事件数（saveChunk 成功后推进，用于安全裁剪） */
+  private lastCachedConfirmedIndex: number = 0;
+  /** 已从内存 events 头部裁剪掉的事件数（累积绝对偏移） */
+  private eventBaseOffset: number = 0;
   private cacheChunkWriteIndex: number = 0;
   private cacheStopped: boolean = false;
 
@@ -439,7 +446,8 @@ export class SessionRecorder {
     }
 
     return {
-      totalEvents: this.events.length,
+      // 累积总数（含已裁剪出内存的已上传事件），与 clickCount 等累积计数语义一致
+      totalEvents: this.eventBaseOffset + this.events.length,
       clickCount: this.clickCount,
       touchClickCount: this.touchClickCount,
       selectionCount: this.selectionCount,
@@ -502,8 +510,9 @@ export class SessionRecorder {
   }
 
   private async _doUploadChunk(isFinal: boolean): Promise<boolean> {
-    const snapshotEventCount = this.events.length;
-    const newEvents = this.events.slice(this.lastChunkEventIndex);
+    // snapshotEventCount 记录本次上传覆盖到的「绝对事件数」
+    const snapshotEventCount = this.eventBaseOffset + this.events.length;
+    const newEvents = this.events.slice(this.lastChunkEventIndex - this.eventBaseOffset);
     if (newEvents.length === 0 && !isFinal) return true;
 
     const chunk: RecordingChunk = {
@@ -538,6 +547,9 @@ export class SessionRecorder {
         if (result.success) {
           this.lastChunkEventIndex = snapshotEventCount;
           this.chunkIndex++;
+          // 最终分段（stop）不裁剪：内存收益微乎其微，且要保留 events 供
+          // stop 后的 exportRecording() 使用（非分段模式仅走 final 分支，因此完全向后兼容）
+          if (!isFinal) this.trimUploadedEvents();
           this.log(`Chunk ${chunk.chunkIndex} uploaded (${newEvents.length} events, final: ${isFinal})`);
           return true;
         }
@@ -557,6 +569,33 @@ export class SessionRecorder {
     }
 
     return false;
+  }
+
+  /**
+   * 分段上传成功后，从内存 events 头部裁剪掉「已上传且已确认落盘」的前缀。
+   *
+   * 只裁剪 min(已上传绝对数, 已确认缓存绝对数) 之前的事件，保证：
+   *  - 被裁剪的事件都已在 IndexedDB 中 → 崩溃恢复重建的事件流无断层；
+   *  - 尚未确认落盘的已上传事件继续留在内存，等下次 saveToCache 落盘后再裁剪。
+   *
+   * lastChunkEventIndex / lastCachedEventIndex 保持为累积绝对下标不变，
+   * 只推进 eventBaseOffset 并 splice 内存数组，因此崩溃恢复逻辑无需改动。
+   */
+  private trimUploadedEvents(): void {
+    if (this.options.chunkedUpload?.trimEventsAfterUpload === false) return;
+
+    // 未启用缓存时，已上传即可安全裁剪（无需为恢复保留）；
+    // 启用缓存时，必须等事件确认写入 IndexedDB 后才能裁剪。
+    const cacheActive = !!this.cacheManager && !this.cacheStopped;
+    const trimAbs = cacheActive
+      ? Math.min(this.lastChunkEventIndex, this.lastCachedConfirmedIndex)
+      : this.lastChunkEventIndex;
+
+    const trimCount = trimAbs - this.eventBaseOffset;
+    if (trimCount <= 0) return;
+
+    this.events.splice(0, trimCount);
+    this.eventBaseOffset = trimAbs;
   }
 
   // ==================== rrweb 配置构建 ====================
@@ -855,14 +894,17 @@ export class SessionRecorder {
       return;
     }
 
-    const startIndex = this.lastCachedEventIndex;
-    const newEvents = this.events.slice(startIndex);
+    // 索引均为累积绝对值；换算成内存窗口下标做 slice
+    const startAbs = this.lastCachedEventIndex;
+    const startRel = startAbs - this.eventBaseOffset;
+    const newEvents = this.events.slice(startRel);
     if (newEvents.length === 0) return;
 
+    const writtenUpToAbs = this.eventBaseOffset + this.events.length;
     const cacheChunkIndex = this.cacheChunkWriteIndex++;
 
-    // 同步推进，防止下次 saveToCache 重复 slice 相同事件
-    this.lastCachedEventIndex = this.events.length;
+    // 同步推进（乐观），防止下次 saveToCache 重复 slice 相同事件
+    this.lastCachedEventIndex = writtenUpToAbs;
 
     this.cacheManager.saveChunk({
       sessionId: this.sessionId,
@@ -880,10 +922,14 @@ export class SessionRecorder {
       metadata: this.metadata || undefined,
     }).then(() => {
       if (this.cacheStopped) return;
+      // 仅在确认落盘后推进「已确认缓存」水位，供内存裁剪安全使用
+      this.lastCachedConfirmedIndex = Math.max(this.lastCachedConfirmedIndex, writtenUpToAbs);
+      // 已上传但此前因未确认落盘而暂留内存的事件，现在可安全裁剪
+      this.trimUploadedEvents();
       this.log('Saved to cache (incremental)');
     }).catch(() => {
       if (this.cacheStopped) return;
-      this.lastCachedEventIndex = Math.min(this.lastCachedEventIndex, startIndex);
+      this.lastCachedEventIndex = Math.min(this.lastCachedEventIndex, startAbs);
       this.log('Failed to save cache chunk, will retry next interval');
     });
   }
@@ -1130,7 +1176,7 @@ export class SessionRecorder {
         try {
           const payload = JSON.stringify({
             sessionId: this.sessionId,
-            events: this.events.slice(this.lastChunkEventIndex),
+            events: this.events.slice(this.lastChunkEventIndex - this.eventBaseOffset),
             metadata: this.metadata || undefined,
             summary: this.buildSummary(),
             timestamp: Date.now(),
@@ -1203,6 +1249,8 @@ export class SessionRecorder {
     this.chunkIndex = 0;
     this.lastChunkEventIndex = 0;
     this.lastCachedEventIndex = 0;
+    this.lastCachedConfirmedIndex = 0;
+    this.eventBaseOffset = 0;
     this.cacheChunkWriteIndex = 0;
     this.cacheStopped = false;
     this.uploadingChunk = false;

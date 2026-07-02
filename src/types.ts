@@ -499,6 +499,19 @@ export interface SessionRecorderOptions {
     enabled?: boolean;
     /** 分段间隔（毫秒）@default 60000 (1分钟) */
     interval?: number;
+    /**
+     * 分段上传成功后，从内存中裁剪掉「已上传且已确认写入缓存」的事件，
+     * 避免长会话（连续录制 + 分段上传）下内存中的 events 数组单调增长。
+     *
+     * 裁剪只发生在既已上传成功、又已确认落盘 IndexedDB 缓存的前缀上，
+     * 因此不影响崩溃恢复（恢复从缓存重建完整事件流）。
+     *
+     * 注意：开启后，录制过程中 `exportRecording()` / `getEventCount()` 只反映
+     * 内存中「尚未裁剪的窗口」，而非整段会话的全部事件。若你依赖录制结束后
+     * 通过 `exportRecording()` 取回完整录制，请显式设为 `false`。
+     * @default true
+     */
+    trimEventsAfterUpload?: boolean;
   };
 
   /**

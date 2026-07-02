@@ -259,7 +259,16 @@ const recorder = getRecorder({
   cache: { enabled: true, saveInterval: 5000, maxItems: 10, maxAge: 604800000 },
 
   // 分段上传（长录制场景）
-  chunkedUpload: { enabled: true, interval: 60000 },
+  chunkedUpload: {
+    enabled: true,
+    interval: 60000,
+    // 每个分段上传成功后，从内存中裁剪已上传事件（默认 true）。
+    // 长时间连续录制时把内存 events 稳定控制在「一个分段窗口」量级，
+    // 避免单调增长（对移动端 WebView / iOS jetsam 尤其重要）。
+    // 只裁剪「已确认写入崩溃恢复缓存」的事件，因此不影响崩溃恢复。
+    // 若你依赖录制过程中 exportRecording() 返回完整事件流，可设为 false。
+    trimEventsAfterUpload: true,
+  },
 
   // 回调
   onEventEmit: (event, count) => {},
@@ -267,6 +276,8 @@ const recorder = getRecorder({
   onStatusChange: (status, prev) => {},
 
   // 限制
+  // 注意：开启 chunkedUpload + trimEventsAfterUpload 后，maxEvents 约束的是
+  // 内存窗口大小（内存兜底），而非整段会话事件总数；请用 maxDuration 控制会话时长。
   maxEvents: 50000,
   maxDuration: 1800000,  // 30 分钟
   maxRetries: 3,
