@@ -251,7 +251,16 @@ const recorder = getRecorder({
   cache: { enabled: true, saveInterval: 5000, maxItems: 10, maxAge: 604800000 },
 
   // Chunked upload (for long recordings)
-  chunkedUpload: { enabled: true, interval: 60000 },
+  chunkedUpload: {
+    enabled: true,
+    interval: 60000,
+    // Trim already-uploaded events from memory after each chunk succeeds (default: true).
+    // Keeps RAM bounded to ~one chunk window during long continuous recordings
+    // (important for mobile WebView / iOS jetsam). Only events already persisted to the
+    // crash-recovery cache are trimmed, so recovery is unaffected. Set to `false` if you
+    // rely on `exportRecording()` returning the full stream during recording.
+    trimEventsAfterUpload: true,
+  },
   onChunkUpload: async (chunk) => { return { success: true }; },
 
   // Callbacks
@@ -260,6 +269,8 @@ const recorder = getRecorder({
   onStatusChange: (status, prev) => {},
 
   // Limits
+  // NOTE: with chunkedUpload + trimEventsAfterUpload, `maxEvents` bounds the in-memory
+  // window (a memory guard), not the total session; use `maxDuration` to cap session length.
   maxEvents: 50000,
   maxDuration: 1800000,  // 30 min
   maxRetries: 3,

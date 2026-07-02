@@ -1345,6 +1345,225 @@ describe('SessionRecorder', () => {
     });
   });
 
+  describe('分段上传内存裁剪 (trimEventsAfterUpload)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('上传成功后应从内存裁剪已上传事件（默认开启），多段之间无重叠', async () => {
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      recorder = new SessionRecorder({
+        cache: { enabled: false },
+        chunkedUpload: { enabled: true, interval: 1000 },
+        onChunkUpload,
+      });
+      recorder.start();
+
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
+      mockEmitFn?.({ type: 3, data: { source: 1 }, timestamp: Date.now() });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(onChunkUpload).toHaveBeenCalledTimes(1);
+      expect(onChunkUpload.mock.calls[0][0].events.length).toBe(3);
+      // 内存已裁剪，窗口归零
+      expect(recorder.getEventCount()).toBe(0);
+      expect((recorder as any).eventBaseOffset).toBe(3);
+
+      // 继续录制第二段：只含新增量，与第一段无重叠
+      mockEmitFn?.({ type: 3, data: { source: 2 }, timestamp: Date.now() });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(onChunkUpload).toHaveBeenCalledTimes(2);
+      const c1 = onChunkUpload.mock.calls[1][0];
+      expect(c1.chunkIndex).toBe(1);
+      expect(c1.events.length).toBe(1);
+      expect(c1.events[0].data.source).toBe(2);
+      expect(recorder.getEventCount()).toBe(0);
+      expect((recorder as any).eventBaseOffset).toBe(4);
+      // 累积摘要 totalEvents 仍反映全量
+      expect(c1.summary.totalEvents).toBe(4);
+    });
+
+    it('trimEventsAfterUpload:false 时保留全量内存', async () => {
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      recorder = new SessionRecorder({
+        cache: { enabled: false },
+        chunkedUpload: { enabled: true, interval: 1000, trimEventsAfterUpload: false },
+        onChunkUpload,
+      });
+      recorder.start();
+
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(recorder.getEventCount()).toBe(2);
+      expect((recorder as any).eventBaseOffset).toBe(0);
+
+      mockEmitFn?.({ type: 3, data: { source: 1 }, timestamp: Date.now() });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(recorder.getEventCount()).toBe(3);
+      expect(onChunkUpload.mock.calls[1][0].events.length).toBe(1);
+    });
+
+    it('上传失败不应裁剪内存，重试成功后再裁剪且包含失败事件', async () => {
+      const onChunkUpload = vi.fn()
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValue({ success: true });
+
+      recorder = new SessionRecorder({
+        cache: { enabled: false },
+        chunkedUpload: { enabled: true, interval: 1000 },
+        onChunkUpload,
+        maxRetries: 0,
+      });
+      recorder.start();
+
+      mockEmitFn?.({ type: 2, data: {}, timestamp: Date.now() });
+      mockEmitFn?.({ type: 3, data: {}, timestamp: Date.now() });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // 上传失败：内存保留，偏移不变
+      expect(recorder.getEventCount()).toBe(2);
+      expect((recorder as any).eventBaseOffset).toBe(0);
+
+      mockEmitFn?.({ type: 3, data: { source: 5 }, timestamp: Date.now() });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const last = onChunkUpload.mock.calls[onChunkUpload.mock.calls.length - 1][0];
+      expect(last.events.length).toBe(3);
+      expect(last.chunkIndex).toBe(0);
+      expect(recorder.getEventCount()).toBe(0);
+      expect((recorder as any).eventBaseOffset).toBe(3);
+    });
+
+    it('缓存开启时：确认落盘后才裁剪；全部已上传后崩溃恢复不重复上传', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      recorder1.start();
+      const sid = (recorder1 as any).sessionId;
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { id: 1, childNodes: [] } }, timestamp: now + 1 });
+      emit1({ type: 3, data: { source: 0 }, timestamp: now + 2 });
+
+      // 先上传：此时尚未确认落盘 → 不应裁剪
+      await (recorder1 as any).uploadChunk(false);
+      expect(recorder1.getEventCount()).toBe(3);
+      expect((recorder1 as any).eventBaseOffset).toBe(0);
+
+      // 落盘并等待确认 → 触发安全裁剪
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 200));
+      expect(recorder1.getEventCount()).toBe(0);
+      expect((recorder1 as any).eventBaseOffset).toBe(3);
+
+      // 崩溃：全部已上传，但 deleteSession 未执行
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      // 该会话事件已全部上传：恢复（走 onUpload）不应再次上传（依赖缓存中 lastChunkEventIndex 为绝对下标）
+      const reUploads = onUpload.mock.calls.map(c => c[0]).filter((c: any) => c.sessionId === sid);
+      expect(reUploads.length).toBe(0);
+      const remaining = await (recorder2 as any).cacheManager.getSessionChunks(sid);
+      expect(remaining.length).toBe(0);
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+
+    it('缓存开启时：trim 后继续录制，崩溃恢复的段与已上传段无重复事件', async () => {
+      vi.useRealTimers();
+      const onUpload = vi.fn().mockResolvedValue({ success: true });
+      const onChunkUpload = vi.fn().mockResolvedValue({ success: true });
+
+      const recorder1 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      recorder1.start();
+      const sid = (recorder1 as any).sessionId;
+
+      const emit1 = (record as any).mock.calls[(record as any).mock.calls.length - 1]?.[0]?.emit;
+      const now = Date.now();
+      emit1({ type: 4, data: { href: 'http://test.com' }, timestamp: now });
+      emit1({ type: 2, data: { node: { id: 1, childNodes: [{ id: 2, childNodes: [] }] } }, timestamp: now + 1 });
+      emit1({ type: 3, data: { source: 0, adds: [{ parentId: 2, nextId: null, node: { id: 100, childNodes: [] } }] }, timestamp: now + 2 });
+
+      await (recorder1 as any).uploadChunk(false); // 上传 c0（含 A）
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 200));
+      expect(recorder1.getEventCount()).toBe(0);
+
+      // 第二段：新中段 FullSnapshot（checkout）+ 增量 B（未上传）
+      emit1({ type: 2, data: { node: { id: 1, childNodes: [{ id: 2, childNodes: [{ id: 100, childNodes: [] }] }] } }, timestamp: now + 3 });
+      emit1({ type: 3, data: { source: 0, adds: [{ parentId: 100, nextId: null, node: { id: 200, childNodes: [] } }] }, timestamp: now + 4 });
+      (recorder1 as any).saveToCache();
+      await new Promise(r => setTimeout(r, 200));
+
+      // 崩溃
+      (recorder1 as any).stopRecordingFn?.();
+      (recorder1 as any).stopRecordingFn = null;
+      (recorder1 as any).clearTimers();
+      (recorder1 as any).setStatus('stopped');
+
+      onUpload.mockClear();
+      const recorder2 = new SessionRecorder({
+        cache: { enabled: true },
+        chunkedUpload: { enabled: true, interval: 999999 },
+        onUpload,
+        onChunkUpload,
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      const recoveryData = onUpload.mock.calls.map(c => c[0]).find((c: any) => c.sessionId === sid);
+      expect(recoveryData).toBeDefined();
+      const events = recoveryData.events || recoveryData.content;
+      // 恢复段从最后一个 FullSnapshot（now+3）重建，含未上传的 B
+      expect(events.some((e: any) => e.type === 2)).toBe(true);
+      expect(events.some((e: any) => e.type === 3 && (e.data.adds || []).some((a: any) => a.node?.id === 200))).toBe(true);
+      // 时间线无重复时间戳
+      const ts = events.map((e: any) => e.timestamp);
+      expect(new Set(ts).size).toBe(ts.length);
+
+      recorder2.destroy();
+      vi.useFakeTimers();
+    });
+  });
+
   describe('页面卸载处理', () => {
     it('uploadOnUnload 默认应注册 pagehide 事件', () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
